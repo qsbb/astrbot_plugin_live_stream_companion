@@ -1208,10 +1208,15 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         await self.context.send_message(session_id, MessageChain(chain))
         self._bili_last_auto_reply_at = time.time()
         self._record_bili_auto_reply_rate_mark(selected)
-        if not force_voice:
-            await self._push_subtitle(reply_text, source="bili_live")
+        await self._push_subtitle(reply_text, source="bili_live")
         if force_voice:
-            asyncio.create_task(self._send_bili_live_tts_followup(session_id, reply_text))
+            asyncio.create_task(
+                self._send_bili_live_tts_followup(
+                    session_id,
+                    reply_text,
+                    push_subtitle=False,
+                )
+            )
         logger.info(f"[B站直播] 已自动回应弹幕 -> {session_id}: {reply_text}")
 
     async def _dispatch_bili_live_native_event(
@@ -1391,10 +1396,15 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             send_elapsed = time.perf_counter() - t_send
             self._bili_last_auto_reply_at = time.time()
             self._record_bili_auto_reply_rate_mark(events[-max_events:])
-            if not force_voice:
-                await self._push_subtitle(reply_text, source="bili_live")
+            await self._push_subtitle(reply_text, source="bili_live")
             if force_voice:
-                asyncio.create_task(self._send_bili_live_tts_followup(session_id, reply_text))
+                asyncio.create_task(
+                    self._send_bili_live_tts_followup(
+                        session_id,
+                        reply_text,
+                        push_subtitle=False,
+                    )
+                )
             total_elapsed = time.perf_counter() - started_at
             logger.info(
                 "[B站直播] 自动回应耗时: total=%.2fs conv=%.2fs build=%.2fs llm=%.2fs decorate_tts=%.2fs send=%.2fs session=%s",
@@ -1483,10 +1493,20 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                 return record_chain
         return processed_chain
 
-    async def _send_bili_live_tts_followup(self, session_id: str, text: str) -> None:
+    async def _send_bili_live_tts_followup(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        push_subtitle: bool = True,
+    ) -> None:
         started_at = time.perf_counter()
         try:
-            record_chain = await self._build_bili_live_tts_chain(session_id, text)
+            record_chain = await self._build_bili_live_tts_chain(
+                session_id,
+                text,
+                push_subtitle=push_subtitle,
+            )
             if not record_chain:
                 return
             await self.context.send_message(session_id, MessageChain(record_chain))
@@ -1519,7 +1539,13 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                     parts.append(text)
         return "\n".join(parts).strip()
 
-    async def _build_bili_live_tts_chain(self, session_id: str, text: str) -> list[Any]:
+    async def _build_bili_live_tts_chain(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        push_subtitle: bool = True,
+    ) -> list[Any]:
         spoken = self._strip_tts_blocks_from_text(text)
         if not spoken:
             return []
@@ -1563,7 +1589,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                 subtitle_text=subtitle_text,
             )
         )
-        if not self._companion_tts_live_subtitle_enabled():
+        if push_subtitle and not self._companion_tts_live_subtitle_enabled():
             await self._push_subtitle(subtitle_text, source="bili_live")
         logger.info(
             "[B站直播] 已生成直播自动回应 TTS: convert=%.2fs provider=%.2fs path=%s text=%s",
