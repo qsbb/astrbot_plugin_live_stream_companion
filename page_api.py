@@ -58,7 +58,7 @@ class LiveStreamCompanionPageApi:
                     "plugin": {
                         "name": PLUGIN_NAME,
                         "display_name": "我会直播圈米养你",
-                        "version": "1.6.2",
+                        "version": "1.6.8",
                     },
                     "live": self._live_summary(events, session_events),
                     "obs_control": await self._obs_control_status(check_obs_ws=True),
@@ -68,6 +68,8 @@ class LiveStreamCompanionPageApi:
                     "auto_reply": self._auto_reply_summary(),
                     "companion": self._companion_summary(companion, store),
                     "memory": self._memory_summary(store),
+                    "living_memory": plugin._living_memory_summary(),
+                    "integration": self._integration_summary(companion, store),
                     "viewers": self._viewer_summary(store),
                     "recent_events": [self._event_payload(item) for item in events[-20:]][::-1],
                     "config": self._config_summary(),
@@ -509,12 +511,21 @@ class LiveStreamCompanionPageApi:
         return {
             "enabled": bool(self.plugin.config.get("bili_live_auto_reply_enabled", False)),
             "mode": str(self.plugin.config.get("bili_live_auto_reply_mode") or "native"),
+            "identity_mode": self.plugin._bili_live_reply_identity_mode(),
+            "identity_label": self.plugin._bili_live_reply_identity_label(),
+            "streamer": self.plugin._bili_live_streamer_identity(),
             "pending": len(getattr(self.plugin, "_bili_pending_reply_events", [])),
             "cooldown_seconds": self._float(self.plugin.config.get("bili_live_auto_reply_cooldown_seconds"), 12.0),
             "max_per_minute": self._int(self.plugin.config.get("bili_live_auto_reply_max_per_minute"), 6),
             "used_this_minute": len(recent_marks),
             "last_reply_at": float(getattr(self.plugin, "_bili_last_auto_reply_at", 0.0) or 0.0),
             "exempt_event_types": list(self.plugin._bili_auto_reply_priority_types()),
+            "air_guard": bool(self.plugin.config.get("bili_live_auto_reply_air_guard_enabled", True)),
+            "air_guard_model": bool(self.plugin.config.get("bili_live_auto_reply_air_guard_model_enabled", True)),
+            "air_guard_threshold": self._float(self.plugin.config.get("bili_live_auto_reply_air_guard_threshold"), 2.5),
+            "force_full_tts": bool(self.plugin.config.get("bili_live_auto_reply_force_full_tts", True)),
+            "sync_tts_subtitle": bool(self.plugin.config.get("bili_live_auto_reply_sync_tts_subtitle", True)),
+            "local_playback": bool(self.plugin.config.get("bili_live_tts_local_playback_enabled", True)),
         }
 
     def _companion_summary(self, companion: Any | None, store: dict[str, Any]) -> dict[str, Any]:
@@ -524,6 +535,53 @@ class LiveStreamCompanionPageApi:
             "writeback_enabled": bool(self.plugin.config.get("private_companion_writeback_enabled", True)),
             "viewer_activity_enabled": bool(self.plugin.config.get("private_companion_viewer_activity_enabled", True)),
             "summary_count": len(store.get("summaries") if isinstance(store.get("summaries"), list) else []),
+        }
+
+    def _integration_summary(self, companion: Any | None, store: dict[str, Any]) -> dict[str, Any]:
+        living = self.plugin._living_memory_summary()
+        subtitle_server = getattr(self.plugin, "_subtitle_server", None)
+        checks = [
+            {
+                "id": "bili_live",
+                "label": "B站监听",
+                "ok": bool(self.plugin._is_bili_live_running()),
+                "note": "正在接收直播事件" if self.plugin._is_bili_live_running() else "未运行",
+            },
+            {
+                "id": "auto_reply",
+                "label": "自动回应",
+                "ok": bool(self.plugin.config.get("bili_live_auto_reply_enabled", False)),
+                "note": str(self.plugin.config.get("bili_live_auto_reply_mode") or "native"),
+            },
+            {
+                "id": "subtitle",
+                "label": "打字机字幕",
+                "ok": subtitle_server is not None,
+                "note": getattr(subtitle_server, "url", "") if subtitle_server else "未运行",
+            },
+            {
+                "id": "private_companion",
+                "label": "陪伴插件",
+                "ok": companion is not None,
+                "note": "关系网/状态可用" if companion is not None else "未找到运行实例",
+            },
+            {
+                "id": "live_memory",
+                "label": "直播专用记忆",
+                "ok": bool(self.plugin.config.get("live_memory_enabled", True)) and companion is not None,
+                "note": f"{len(store.get('memory_items') if isinstance(store.get('memory_items'), list) else [])} 条可承接记忆",
+            },
+            {
+                "id": "living_memory",
+                "label": "LivingMemory",
+                "ok": bool(living.get("ready")),
+                "note": living.get("message") or "",
+            },
+        ]
+        return {
+            "checks": checks,
+            "ok_count": sum(1 for item in checks if item.get("ok")),
+            "total": len(checks),
         }
 
     def _memory_summary(self, store: dict[str, Any], detailed: bool = False) -> dict[str, Any]:

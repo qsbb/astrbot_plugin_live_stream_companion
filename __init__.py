@@ -1,27 +1,9 @@
-from .clients.open_live import OpenLiveClient
-from .clients.web import WebClient
-from .clients.ws_base import WebSocketClientBase
-from .models.message import (
-    BiliMessage,
-    DanmakuMessage,
-    EnterRoomMessage,
-    GiftMessage,
-    GuardBuyMessage,
-    LikeMessage,
-    MessageType,
-    SuperChatMessage,
-)
+"""
+我会直播圈米养你
 
-__all__ = [
-    "WebClient",
-    "OpenLiveClient",
-    "WebSocketClientBase",
-    "MessageType",
-    "BiliMessage",
-    "DanmakuMessage",
-    "GiftMessage",
-    "GuardBuyMessage",
-    "SuperChatMessage",
-    "LikeMessage",
-    "EnterRoomMessage",
-]
+面向 AstrBot 的直播陪伴、弹幕互动与 Live2D 演出控制插件。
+"""
+
+from .main import VTubeStudioPlugin
+
+__all__ = ["VTubeStudioPlugin"]

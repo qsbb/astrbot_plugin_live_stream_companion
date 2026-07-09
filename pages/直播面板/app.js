@@ -184,6 +184,8 @@ function renderOverview() {
   const memory = data.memory || {};
   const autoReply = data.auto_reply || {};
   const companion = data.companion || {};
+  const integration = data.integration || {};
+  const streamer = autoReply.streamer || {};
   if (state.configFallback && !state.configDirty && data.config) {
     state.configValues = { ...state.configValues, ...data.config };
     renderConfig();
@@ -201,14 +203,24 @@ function renderOverview() {
     ["观众画像", data.viewers?.count || 0, "累计观众"],
     ["本分钟回复", `${autoReply.used_this_minute || 0}/${autoReply.max_per_minute || 0}`, "普通弹幕限流"],
     ["直播小结", memory.summary_count || 0, "历史整理"],
+    ["联动健康", `${integration.ok_count || 0}/${integration.total || 0}`, "监听/字幕/记忆"],
   ]);
 
   renderLiveFlow(data);
   renderMetricList(els.autoReplyPanel, [
     ["状态", boolText(autoReply.enabled)],
     ["模式", autoReply.mode || "native"],
+    ["身份", autoReply.identity_label || autoReply.identity_mode || "主播模式"],
+    ["主播称呼", streamer.name || "主播"],
+    ["身份来源", streamer.source || "fallback"],
     ["待回应事件", autoReply.pending || 0],
     ["冷却", `${autoReply.cooldown_seconds || 0}s`],
+    ["读空气降噪", boolText(autoReply.air_guard)],
+    ["陪伴读空气", boolText(autoReply.air_guard_model)],
+    ["回应阈值", autoReply.air_guard_threshold || 2.5],
+    ["全量 TTS", boolText(autoReply.force_full_tts)],
+    ["TTS/打字机同步", boolText(autoReply.sync_tts_subtitle)],
+    ["TTS 本机播放", boolText(autoReply.local_playback)],
     ["每分钟上限", autoReply.max_per_minute === 0 ? "不限" : autoReply.max_per_minute],
     ["豁免事件", (autoReply.exempt_event_types || []).join("、") || "无"],
   ]);
@@ -219,6 +231,8 @@ function renderOverview() {
     ["字幕地址", data.subtitle?.url || "--"],
     ["嘴型", data.mouth_sync?.enabled ? "已启用" : "未启用"],
     ["嘴型参数", data.mouth_sync?.parameter || "--"],
+    ["陪伴插件", companion.available ? "已连接" : "未找到"],
+    ["LivingMemory", data.living_memory?.ready ? "已就绪" : (data.living_memory?.available ? "初始化中" : "未找到")],
   ]);
   renderObsControl(data.obs_control || {});
   renderTopViewers(data.live?.top_viewers || []);
@@ -257,12 +271,14 @@ function renderLiveFlow(data) {
   const live = data.live || {};
   const companion = data.companion || {};
   const memory = data.memory || {};
+  const living = data.living_memory || {};
   const steps = [
     ["B站监听", live.running ? "ok" : "idle", live.running ? `${live.type}/${live.backend}` : "可在配置页准备"],
     ["事件缓存", live.cache_count ? "ok" : "idle", `${live.cache_count || 0} 条`],
     ["自动回应", data.auto_reply?.enabled ? "ok" : "idle", data.auto_reply?.mode || "native"],
     ["直播记忆", memory.enabled ? "ok" : "idle", `${memory.memory_count || 0} 条记忆`],
     ["陪伴联动", companion.available ? "ok" : "idle", companion.available ? "已连接" : "未找到"],
+    ["长期记忆", living.ready ? "ok" : "idle", living.ready ? `召回 top_k ${living.top_k || 0}` : (living.available ? "初始化中" : "未找到")],
     ["VTS/字幕", data.vts?.connected || data.subtitle?.running ? "ok" : "idle", data.subtitle?.running ? "字幕运行" : "演出待命"],
   ];
   els.liveFlow.innerHTML = steps.map(([title, status, desc]) => `

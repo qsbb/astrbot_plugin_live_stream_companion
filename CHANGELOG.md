@@ -1,7 +1,41 @@
 # 更改记录
 
+## 1.6.8
+
+- 主播助理模式支持从陪伴插件读取主要用户直播身份：新增 `bili_live_streamer_identity_from_companion_enabled` 和 `bili_live_streamer_display_name`。手动显示名优先；留空时从陪伴插件主要用户昵称/关系网档案推断主播称呼和身份线索。
+- 直播面板和 `/bili_live_integration_status` 会显示当前主播称呼和来源。
+
+## 1.6.7
+
+- 新增 `bili_live_reply_identity_mode`：支持 `host` 主播模式和 `assistant` 主播助理模式。主播模式下 Bot 以主播身份直接回应弹幕；主播助理模式下 Bot 作为辅助用户直播的聊天助手/场控助理回应，不假装自己是主播。
+- 自动回应、预置测试回复、联动状态和直播面板均接入身份模式。
+
+## 1.6.6
+
+- 将 `bili_live_auto_reply_sync_tts_subtitle` 默认改为开启，并同步更新当前本地配置，直播自动回应会等待 TTS 音频生成后再推送 OBS 打字机字幕。
+- 修复同步模式内部仍可能提前调度本机播放的问题：同步发送现在先生成音频，等进入同步发送点后再启动本机播放和字幕。
+
+## 1.6.5
+
+- 修复 Windows 本机播放直播 TTS 时只听到系统错误提示音的问题。现在会等待音频文件稳定后再播放，自动修复异常 wav 头，并按 `ffplay -> PowerShell MediaPlayer -> winsound` 顺序兜底；`winsound` 禁用默认错误提示音，失败时不再“叮”。
+
+## 1.6.4
+
+- 修复未显式配置自动回应会话时可能误选 `live2d_default` 作为聊天出口的问题。现在优先使用 `/bili_live_bind_here` 的绑定记录，自动猜测时会跳过 Live2D/VTS/OBS/字幕等非聊天平台。
+- “听得到吗 / 看得到吗 / 在吗 / 测试”等直播连通性弹幕改为预置短回复，不再调用主模型和记忆上下文，避免把旧话题或其他观众强行带进当前弹幕。
+
+## 1.6.3
+
+- 新增直播读空气降噪：`bili_live_auto_reply_air_guard_enabled` 默认开启，单条轻寒暄/反应不再每条都自动回复；边界模糊时可通过 `bili_live_auto_reply_air_guard_model_enabled` 联动陪伴插件的轻量判定能力。
+- 自动回应提示词补充“不要反复欢迎/你好/好久不见”，降低直播间连续寒暄感。
+
 ## 1.6.2
 
+- 新增 `bili_live_tts_local_playback_enabled`，直播自动回应 TTS 音频生成后由本插件直接本机播放，降低依赖陪伴插件回调导致的漏播概率。
+- 打磨直播自动回应体验：新增直播回应体验护栏，降低记忆/关系线索导致的过度熟人寒暄；自动回应会主动读取 LivingMemory 相关长期记忆作为背景但不写入，避免污染长期库。
+- 深入检查并修复直播联动隐藏问题：直接补发/同步发送的直播 TTS 现在也会触发本插件嘴型联动；native 完整链路失败时改为直接 LLM 回退，避免把整段直播 prompt 投进全局事件队列并被长期记忆当普通私聊记录。
+- 新增 `/bili_live_integration_status`，并在拓展页显示 B站监听、自动回应、字幕、陪伴插件、直播记忆和 LivingMemory 的联动健康状态。
+- 新增 `bili_live_auto_reply_sync_tts_subtitle` 配置。开启后直播自动回应会等待 TTS 音频生成，再同步发送语音、可见文字和 OBS 打字机字幕；关闭时保持低延迟文字/字幕先出、TTS 后台补发。
 - 修复普通 QQ 消息仍可能进入 OBS 打字机字幕的问题。
 - 将 `subtitle_scope` 的默认值调整为 `bili_live`，默认只允许 B 站直播自动回应、直播 TTS、手动测试和拓展页预览推送字幕。
 - 将字幕来源校验下沉到 `_push_subtitle()` 本身，并要求直播/手动/预览路径显式传入来源，避免外部插件或直接调用绕过回复 hook。

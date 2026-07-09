@@ -609,6 +609,29 @@
     },
     "default": 5
   },
+  "bili_live_auto_reply_air_guard_enabled": {
+    "description": "启用直播读空气降噪",
+    "type": "bool",
+    "hint": "开启后，直播自动回应会先判断本批弹幕是否值得出声。单条你好、来了、贴贴、哈哈、6、晚安等轻寒暄/反应通常会静默；具体问题、请求、纠错、多人连续话题、礼物/SC/上舰仍会回应。",
+    "default": true
+  },
+  "bili_live_auto_reply_air_guard_model_enabled": {
+    "description": "联动陪伴插件读空气模型",
+    "type": "bool",
+    "hint": "开启后，遇到边界模糊的弹幕批次会调用陪伴插件的轻量 LLM 判定能力决定 reply/silent；陪伴插件不可用或判定失败时自动退回本地规则。",
+    "default": true
+  },
+  "bili_live_auto_reply_air_guard_threshold": {
+    "description": "直播读空气回应阈值",
+    "type": "float",
+    "hint": "本地规则的开口阈值。数值越高越少回复，越低越积极回复。建议 2.0 到 3.5。",
+    "slider": {
+      "min": 0.5,
+      "max": 6,
+      "step": 0.1
+    },
+    "default": 2.5
+  },
   "bili_live_continuity_context_max_viewers": {
     "description": "连续对话参考观众数",
     "type": "int",
@@ -646,6 +669,40 @@
     "type": "bool",
     "hint": "开启后，native 框架链路会向模型补充“本次回复需要包含语音消息”，并在完整框架链路中标记 TTS 插件强制语音",
     "default": true
+  },
+  "bili_live_auto_reply_sync_tts_subtitle": {
+    "description": "直播 TTS 与打字机同步",
+    "type": "bool",
+    "hint": "开启后，直播自动回应会先等待 TTS 音频生成，再同时发送语音、可见文字并推送 OBS 打字机字幕；关闭时文字和字幕先出，TTS 后台补发。需要同时开启“直播自动回应请求语音回复”。",
+    "default": true
+  },
+  "bili_live_tts_local_playback_enabled": {
+    "description": "直播 TTS 本机播放",
+    "type": "bool",
+    "hint": "开启后，直播自动回应的 TTS 音频生成成功后由本插件直接在本机播放，不再只依赖陪伴插件回调。播放顺序为 ffplay、Windows PowerShell MediaPlayer、winsound 兜底；winsound 会禁用默认错误提示音。",
+    "default": true
+  },
+  "bili_live_reply_identity_mode": {
+    "description": "直播回复身份模式",
+    "type": "string",
+    "hint": "host=主播模式，Bot 以主播身份直接回应弹幕；assistant=主播助理模式，Bot 作为辅助用户直播的聊天助手/场控助理回应弹幕，不假装自己是主播。",
+    "options": [
+      "host",
+      "assistant"
+    ],
+    "default": "host"
+  },
+  "bili_live_streamer_identity_from_companion_enabled": {
+    "description": "从陪伴插件读取主要用户直播身份",
+    "type": "bool",
+    "hint": "开启后，主播助理模式会优先从“我会永远陪着你”的主要用户、昵称和关系网档案中读取主播称呼/身份线索。手动填写主播显示名时仍以手动配置优先。",
+    "default": true
+  },
+  "bili_live_streamer_display_name": {
+    "description": "主播显示名覆盖",
+    "type": "string",
+    "hint": "可选。填写后主播助理模式会使用这个称呼，例如“小环这边听得到哦”。留空时从陪伴插件主要用户推断，仍没有则使用“主播”。",
+    "default": ""
   },
   "bili_live_auto_reply_system_prompt": {
     "description": "自动回应系统提示词",
