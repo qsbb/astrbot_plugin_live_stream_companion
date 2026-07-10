@@ -108,7 +108,7 @@ class SyntheticBiliLiveWakeEvent(AstrMessageEvent):
     "astrbot_plugin_live_stream_companion",
     "menglimi",
     "B 站直播弹幕读取、自动回应、Live2D 表情动作、OBS 字幕和 TTS 嘴型联动",
-    "1.6.8",
+    "1.6.9",
     "https://github.com/menglimi/astrbot_plugin_live_stream_companion",
 )
 class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
@@ -137,7 +137,13 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             | BilibiliOpenLiveClient
         ] = None
         self._bili_live_task: Optional[asyncio.Task] = None
-        cache_size = max(10, int(self.config.get("bili_live_cache_size", 80) or 80))
+        cache_size = max(
+            10,
+            min(
+                5000,
+                self._safe_parse_int(self.config.get("bili_live_cache_size"), 80),
+            ),
+        )
         self._bili_events: deque[LiveDanmakuEvent] = deque(maxlen=cache_size)
         self._bili_session_events: deque[LiveDanmakuEvent] = deque(maxlen=500)
         self._bili_pending_reply_events: deque[LiveDanmakuEvent] = deque(maxlen=50)
@@ -227,12 +233,10 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
     async def terminate(self):
         """插件卸载/停用时：断开 VTS 连接，清理资源"""
         try:
-            for task in list(self._l2d_tasks):
-                task.cancel()
-            self._l2d_tasks.clear()
-            for task in list(self._mouth_sync_tasks):
-                task.cancel()
-            self._mouth_sync_tasks.clear()
+            await self._cancel_task_set(self._l2d_tasks)
+            await self._cancel_task_set(self._mouth_sync_tasks)
+            await self._cancel_task_attr("_bili_auto_reply_task")
+            await self._cancel_task_attr("_bili_area_load_task")
             if self._private_companion_proactive_register_task:
                 task = self._private_companion_proactive_register_task
                 task.cancel()
@@ -248,6 +252,26 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             logger.info("[VTS] 插件已卸载，VTS 连接已关闭")
         except Exception as e:
             logger.warning(f"[VTS] 卸载时断开连接失败: {e}")
+
+    async def _cancel_task_set(self, tasks: set[asyncio.Task]) -> None:
+        pending = [task for task in list(tasks) if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        tasks.clear()
+
+    async def _cancel_task_attr(self, name: str) -> None:
+        task = getattr(self, name, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug(f"[任务清理] {name} 结束时出现异常: {e}")
+        setattr(self, name, None)
 
     async def _discover(self) -> tuple:
         """确定要连接的 host:port"""

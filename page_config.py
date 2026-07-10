@@ -11,6 +11,14 @@ from typing import Any
 class PageConfigManager:
     """拓展页配置读写与运行时同步。"""
 
+    SENSITIVE_KEYS = frozenset(
+        {
+            "bilibili_sessdata",
+            "laplace_event_bridge_token",
+            "obs_ws_password",
+        }
+    )
+
     def __init__(self, plugin: Any, plugin_name: str, logger: Any) -> None:
         self.plugin = plugin
         self.plugin_name = plugin_name
@@ -31,7 +39,7 @@ class PageConfigManager:
     def values(self, keys: list[str]) -> dict[str, Any]:
         schema = self.read_schema()
         return {
-            key: "" if key == "obs_ws_password" else self.plugin.config.get(key, schema.get(key, {}).get("default"))
+            key: "" if key in self.SENSITIVE_KEYS else self.plugin.config.get(key, schema.get(key, {}).get("default"))
             for key in keys
         }
 
@@ -42,7 +50,9 @@ class PageConfigManager:
         for key, value in values.items():
             if key not in editable_keys or key not in schema:
                 continue
-            if key == "obs_ws_password" and not str(value or "").strip():
+            # The page never receives existing credentials. An empty value means
+            # "keep the current credential", rather than clearing it by accident.
+            if key in self.SENSITIVE_KEYS and not str(value or "").strip():
                 continue
             updates[key] = self.coerce_value(value, schema[key])
         return updates
