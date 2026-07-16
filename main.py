@@ -7,6 +7,7 @@ import asyncio
 import base64
 import copy
 from collections import deque
+import datetime
 import importlib
 import inspect
 import json
@@ -108,7 +109,7 @@ class SyntheticBiliLiveWakeEvent(AstrMessageEvent):
     "astrbot_plugin_live_stream_companion",
     "menglimi",
     "B 站直播弹幕读取、自动回应、Live2D 表情动作、OBS 字幕和 TTS 嘴型联动",
-    "1.6.9",
+    "1.7.0",
     "https://github.com/menglimi/astrbot_plugin_live_stream_companion",
 )
 class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
@@ -1035,6 +1036,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
     async def _bili_auto_reply_worker(self) -> None:
         events: list[LiveDanmakuEvent] = []
         processing_support_ids: set[str] = set()
+        batch_drained = False
         try:
             cooldown = max(
                 1.0,
@@ -1073,6 +1075,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             }
             self._bili_processing_support_event_ids.update(processing_support_ids)
             self._bili_pending_reply_events.clear()
+            batch_drained = True
             await self._reply_to_bili_live_events(events)
             await self._send_unacknowledged_bili_support_fallback(events)
         except asyncio.CancelledError:
@@ -1088,7 +1091,13 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             self._bili_processing_support_event_ids.difference_update(
                 processing_support_ids
             )
-            if self._bili_pending_reply_events:
+            current_task = asyncio.current_task()
+            is_cancelling = bool(
+                current_task
+                and callable(getattr(current_task, "cancelling", None))
+                and current_task.cancelling()
+            )
+            if batch_drained and self._bili_pending_reply_events and not is_cancelling:
                 asyncio.get_running_loop().call_soon(self._schedule_bili_auto_reply)
 
     async def _get_bili_reply_session(self) -> str:
@@ -1223,6 +1232,17 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             raw = ["super_chat"]
         return {str(item).strip() for item in raw if str(item).strip()}
 
+    def _bili_reply_has_named_thanks(self, reply: str, username: str) -> bool:
+        if not reply or not username:
+            return False
+        thanks = r"(?:谢谢|感谢|谢啦|多谢)"
+        same_clause = r"[^，,。.!！?？；;\n]{0,32}"
+        name = re.escape(username)
+        return bool(
+            re.search(rf"{thanks}{same_clause}{name}", reply)
+            or re.search(rf"{name}{same_clause}{thanks}", reply)
+        )
+
     def _ensure_bili_support_acknowledgement(
         self, reply_text: str, events: list[LiveDanmakuEvent]
     ) -> str:
@@ -1234,8 +1254,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             username = self._single_line_text(event.username, 30)
             if not username or username in {"系统", "观众"}:
                 continue
-            has_named_thanks = username in reply and any(word in reply for word in ("谢谢", "感谢", "谢啦", "多谢"))
-            if has_named_thanks:
+            if self._bili_reply_has_named_thanks(reply, username):
                 continue
             amount = f"{event.amount:g}元" if isinstance(event.amount, (int, float)) else ""
             label = "SC" if event.event_type == "super_chat" else "支持"
@@ -1926,7 +1945,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             reply_text = self._clean_auto_reply_text(llm_resp.completion_text or "")
             if not reply_text:
                 return False
-            if "BiliBot 今日活动（已直接读取）" in auxiliary_context and re.search(
+            if "BiliBot 活动（已直接读取）" in auxiliary_context and re.search(
                 r"(让我|等我).{0,6}(查|找|想|看)|我来查一下|我看看记录",
                 reply_text,
             ):
@@ -3780,15 +3799,32 @@ $player.Close()
         api = self._get_bilibili_ai_bot_api()
         if api is None or not callable(getattr(api, "activity_overview", None)):
             return ""
+        recent_requested = "最近" in query
         try:
-            overview = str(api.activity_overview() or "").strip()
+            if recent_requested:
+                today = datetime.date.today()
+                overviews = [
+                    str(
+                        api.activity_overview(
+                            (today - datetime.timedelta(days=days_ago)).isoformat()
+                        )
+                        or ""
+                    ).strip()
+                    for days_ago in range(3)
+                ]
+                overview = "\n\n".join(item for item in overviews if item)
+                activity_scope = "最近三天"
+            else:
+                overview = str(api.activity_overview() or "").strip()
+                activity_scope = "今天"
         except Exception as e:
-            logger.debug("[B站直播] 直接读取 BiliBot 今日活动失败: %s", e)
+            logger.debug("[B站直播] 直接读取 BiliBot 活动失败: %s", e)
             return ""
         if not overview:
             return ""
         return (
-            "## BiliBot 今日活动（已直接读取）\n"
+            "## BiliBot 活动（已直接读取）\n"
+            f"活动范围：{activity_scope}。\n"
             "下面是 BiliBot API 已经返回的真实活动记录。请依据它直接回答当前直播问题，"
             "不要再次调用 recall_today、recall_video 或其他用于查询今日活动的工具，"
             "也不要只说‘让我查一下/让我想想’。用当前人设自然概括即可。\n"

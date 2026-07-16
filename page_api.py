@@ -58,7 +58,7 @@ class LiveStreamCompanionPageApi:
                     "plugin": {
                         "name": PLUGIN_NAME,
                         "display_name": "我会直播圈米养你",
-                        "version": "1.6.9",
+                        "version": "1.7.0",
                     },
                     "live": self._live_summary(events, session_events),
                     "obs_control": await self._obs_control_status(check_obs_ws=True),
