@@ -84,11 +84,79 @@ class LiveDanmakuEvent:
     content: str
     ts: float = dataclasses.field(default_factory=time.time)
     raw: dict[str, Any] = dataclasses.field(default_factory=dict)
+    user_id: str = ""
+    event_id: str = ""
+    amount: float | int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.user_id:
+            self.user_id = _extract_bilibili_user_id(self.raw)
+        if self.amount is None:
+            self.amount = _extract_bilibili_amount(self.raw)
+        if not self.event_id:
+            self.event_id = _build_live_event_id(self)
 
     def display_text(self) -> str:
         if self.event_type == "danmaku":
             return f"{self.username}: {self.content}"
         return f"{self.username} {self.content}".strip()
+
+
+def _extract_bilibili_user_id(raw: dict[str, Any]) -> str:
+    if not isinstance(raw, dict):
+        return ""
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    user_info = data.get("user_info") if isinstance(data.get("user_info"), dict) else {}
+    candidates = [
+        raw.get("uid"), raw.get("user_id"), raw.get("userId"), raw.get("mid"),
+        data.get("uid"), data.get("user_id"), data.get("userId"), data.get("mid"),
+        user_info.get("uid"), user_info.get("user_id"), user_info.get("mid"),
+    ]
+    info = raw.get("info")
+    if isinstance(info, list) and len(info) > 2 and isinstance(info[2], (list, tuple)) and info[2]:
+        candidates.append(info[2][0])
+    for value in candidates:
+        text = str(value or "").strip()
+        if text and text != "0":
+            return text
+    return ""
+
+
+def _extract_bilibili_amount(raw: dict[str, Any]) -> float | int | None:
+    if not isinstance(raw, dict):
+        return None
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    for value in (data.get("price"), data.get("rmb"), raw.get("priceNormalized"), raw.get("price"), raw.get("rmb")):
+        if value in (None, ""):
+            continue
+        try:
+            number = float(value)
+            return int(number) if number.is_integer() else number
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _build_live_event_id(event: LiveDanmakuEvent) -> str:
+    raw = event.raw if isinstance(event.raw, dict) else {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    for value in (
+        raw.get("id_str"), raw.get("id"), raw.get("messageId"), raw.get("msg_id"), raw.get("rnd"),
+        data.get("id_str"), data.get("message_id"), data.get("msg_id"), data.get("rnd"),
+    ):
+        text = str(value or "").strip()
+        if text:
+            return f"bili_live:{text}"
+    payload = {
+        "type": event.event_type,
+        "uid": event.user_id,
+        "name": event.username,
+        "content": event.content,
+        "ts": None if raw else round(float(event.ts), 3),
+        "raw": raw,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return "bili_live:" + hashlib.sha256(encoded).hexdigest()[:24]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -266,20 +334,21 @@ class BilibiliBlivedmClient:
 
         raw = getattr(message, "raw_data", None) or {}
         username = str(getattr(message, "user_name", "") or "观众")
+        user_id = str(getattr(message, "user_id", "") or "")
 
         if isinstance(message, blivedm_message.DanmakuMessage):
             return LiveDanmakuEvent(
                 "danmaku",
                 username,
                 str(getattr(message, "content", "") or ""),
-                raw=raw,
+                raw=raw, user_id=user_id,
             )
 
         if isinstance(message, blivedm_message.GiftMessage):
             gift_name = str(getattr(message, "gift_name", "") or "礼物")
             gift_num = getattr(message, "gift_num", None) or 1
             return LiveDanmakuEvent(
-                "gift", username, f"赠送 {gift_name} x{gift_num}", raw=raw
+                "gift", username, f"赠送 {gift_name} x{gift_num}", raw=raw, user_id=user_id
             )
 
         if isinstance(message, blivedm_message.SuperChatMessage):
@@ -287,17 +356,17 @@ class BilibiliBlivedmClient:
             price = getattr(message, "price", None)
             prefix = f"发送醒目留言 {price}元" if price else "发送醒目留言"
             return LiveDanmakuEvent(
-                "super_chat", username, f"{prefix}: {content}", raw=raw
+                "super_chat", username, f"{prefix}: {content}", raw=raw, user_id=user_id, amount=price
             )
 
         if isinstance(message, blivedm_message.LikeMessage):
             like_text = str(getattr(message, "like_text", "") or "点赞了直播间")
             like_count = getattr(message, "like_count", None)
             suffix = f" x{like_count}" if like_count else ""
-            return LiveDanmakuEvent("like", username, f"{like_text}{suffix}", raw=raw)
+            return LiveDanmakuEvent("like", username, f"{like_text}{suffix}", raw=raw, user_id=user_id)
 
         if isinstance(message, blivedm_message.EnterRoomMessage):
-            return LiveDanmakuEvent("enter_room", username, "进入直播间", raw=raw)
+            return LiveDanmakuEvent("enter_room", username, "进入直播间", raw=raw, user_id=user_id)
 
         if isinstance(message, blivedm_message.GuardBuyMessage):
             level_names = {1: "总督", 2: "提督", 3: "舰长"}
@@ -305,7 +374,7 @@ class BilibiliBlivedmClient:
             num = getattr(message, "guard_num", None) or 1
             unit = str(getattr(message, "guard_unit", "") or "月")
             return LiveDanmakuEvent(
-                "buy_guard", username, f"成为了{level} x{num}{unit}", raw=raw
+                "buy_guard", username, f"成为了{level} x{num}{unit}", raw=raw, user_id=user_id
             )
 
         return None

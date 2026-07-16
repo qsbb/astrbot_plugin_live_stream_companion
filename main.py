@@ -151,6 +151,10 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         self._bili_last_auto_reply_at = 0.0
         self._bili_auto_reply_minute_marks: deque[float] = deque(maxlen=120)
         self._bili_auto_reply_history: deque[dict[str, Any]] = deque(maxlen=30)
+        self._bili_acknowledged_support_event_ids: set[str] = set()
+        self._bili_processing_support_event_ids: set[str] = set()
+        self._bilibili_ai_memory_tasks: set[asyncio.Task] = set()
+        self._bilibili_ai_written_event_ids: set[str] = set()
         self._bili_session_started_at = 0.0
         self._bili_summary_written_for_session = False
         self._private_companion_writeback_seen: set[str] = set()
@@ -235,6 +239,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         try:
             await self._cancel_task_set(self._l2d_tasks)
             await self._cancel_task_set(self._mouth_sync_tasks)
+            await self._cancel_task_set(self._bilibili_ai_memory_tasks)
             await self._cancel_task_attr("_bili_auto_reply_task")
             await self._cancel_task_attr("_bili_area_load_task")
             if self._private_companion_proactive_register_task:
@@ -935,6 +940,9 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
 
         self._bili_session_started_at = time.time()
         self._bili_session_events.clear()
+        self._bili_acknowledged_support_event_ids.clear()
+        self._bili_processing_support_event_ids.clear()
+        self._bilibili_ai_written_event_ids.clear()
         self._bili_summary_written_for_session = False
         self._private_companion_writeback_seen.clear()
         self._bili_live_task = asyncio.create_task(self._bili_live_client.run_forever())
@@ -981,6 +989,9 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         self._bili_events.append(event)
         self._bili_session_events.append(event)
         await self._write_private_companion_live_event(event)
+        memory_task = asyncio.create_task(self._record_bilibili_ai_live_event(event))
+        self._bilibili_ai_memory_tasks.add(memory_task)
+        memory_task.add_done_callback(self._bilibili_ai_memory_tasks.discard)
         if self._should_collect_for_auto_reply(event):
             self._bili_pending_reply_events.append(event)
             self._schedule_bili_auto_reply()
@@ -1003,6 +1014,14 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
     def _should_collect_for_auto_reply(self, event: LiveDanmakuEvent) -> bool:
         if not self.config.get("bili_live_auto_reply_enabled", False):
             return False
+        if event.event_type in self._bili_guaranteed_support_types():
+            if event.event_id in self._bili_acknowledged_support_event_ids:
+                return False
+            if event.event_id in self._bili_processing_support_event_ids:
+                return False
+            if any(item.event_id == event.event_id for item in self._bili_pending_reply_events):
+                return False
+            return True
         event_types = self.config.get("bili_live_auto_reply_event_types", ["danmaku"])
         if not isinstance(event_types, list):
             event_types = ["danmaku"]
@@ -1014,6 +1033,8 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         self._bili_auto_reply_task = asyncio.create_task(self._bili_auto_reply_worker())
 
     async def _bili_auto_reply_worker(self) -> None:
+        events: list[LiveDanmakuEvent] = []
+        processing_support_ids: set[str] = set()
         try:
             cooldown = max(
                 1.0,
@@ -1022,8 +1043,13 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                 ),
             )
             elapsed = time.time() - self._bili_last_auto_reply_at
-            if elapsed < cooldown:
-                await asyncio.sleep(cooldown - elapsed)
+            remaining = max(0.0, cooldown - elapsed)
+            while remaining > 0 and not any(
+                item.event_type in self._bili_guaranteed_support_types()
+                for item in self._bili_pending_reply_events
+            ):
+                await asyncio.sleep(min(0.25, remaining))
+                remaining = max(0.0, cooldown - (time.time() - self._bili_last_auto_reply_at))
 
             min_events = max(
                 1,
@@ -1031,16 +1057,39 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                     self.config.get("bili_live_auto_reply_min_events"), 1
                 ),
             )
-            if len(self._bili_pending_reply_events) < min_events:
+            has_guaranteed = any(
+                item.event_type in self._bili_guaranteed_support_types()
+                for item in self._bili_pending_reply_events
+            )
+            if len(self._bili_pending_reply_events) < min_events and not has_guaranteed:
                 return
 
             events = list(self._bili_pending_reply_events)
+            processing_support_ids = {
+                item.event_id
+                for item in events
+                if item.event_id
+                and item.event_type in self._bili_guaranteed_support_types()
+            }
+            self._bili_processing_support_event_ids.update(processing_support_ids)
             self._bili_pending_reply_events.clear()
             await self._reply_to_bili_live_events(events)
+            await self._send_unacknowledged_bili_support_fallback(events)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.warning(f"[B站直播] 自动回应弹幕失败: {e}")
+            if events:
+                await self._send_unacknowledged_bili_support_fallback(
+                    events,
+                    reason=str(e),
+                )
+        finally:
+            self._bili_processing_support_event_ids.difference_update(
+                processing_support_ids
+            )
+            if self._bili_pending_reply_events:
+                asyncio.get_running_loop().call_soon(self._schedule_bili_auto_reply)
 
     async def _get_bili_reply_session(self) -> str:
         configured = str(self.config.get("bili_live_auto_reply_session_id") or "").strip()
@@ -1165,8 +1214,122 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             raw = ["gift", "super_chat", "buy_guard"]
         return {str(item).strip() for item in raw if str(item).strip()}
 
+    def _bili_guaranteed_support_types(self) -> set[str]:
+        raw = self.config.get(
+            "bili_live_auto_reply_guaranteed_event_types",
+            ["super_chat"],
+        )
+        if not isinstance(raw, list):
+            raw = ["super_chat"]
+        return {str(item).strip() for item in raw if str(item).strip()}
+
+    def _ensure_bili_support_acknowledgement(
+        self, reply_text: str, events: list[LiveDanmakuEvent]
+    ) -> str:
+        reply = str(reply_text or "").strip()
+        prefixes: list[str] = []
+        for event in events:
+            if event.event_type not in self._bili_guaranteed_support_types():
+                continue
+            username = self._single_line_text(event.username, 30)
+            if not username or username in {"系统", "观众"}:
+                continue
+            has_named_thanks = username in reply and any(word in reply for word in ("谢谢", "感谢", "谢啦", "多谢"))
+            if has_named_thanks:
+                continue
+            amount = f"{event.amount:g}元" if isinstance(event.amount, (int, float)) else ""
+            label = "SC" if event.event_type == "super_chat" else "支持"
+            prefixes.append(f"谢谢{username}的{amount}{label}")
+        if not prefixes:
+            return reply
+        prefix = "，".join(prefixes)
+        return f"{prefix}，{reply}" if reply else prefix + "！"
+
+    def _build_bili_support_fallback_reply(
+        self, events: list[LiveDanmakuEvent]
+    ) -> str:
+        reply = self._ensure_bili_support_acknowledgement("", events)
+        received: list[str] = []
+        for event in events:
+            if event.event_type != "super_chat":
+                continue
+            username = self._single_line_text(event.username, 30)
+            body = self._single_line_text(event.content, 100)
+            body = re.sub(
+                r"^发送醒目留言(?:\s+[0-9]+(?:\.[0-9]+)?元)?\s*[:：]\s*",
+                "",
+                body,
+            ).strip()
+            if not body:
+                continue
+            if username and username not in {"系统", "观众"}:
+                received.append(f"{username}说的“{body}”我看到啦")
+            else:
+                received.append(f"你说的“{body}”我看到啦")
+        if received:
+            reply += " " + "；".join(received) + "。"
+        return reply or "谢谢你的醒目留言！"
+
+    async def _send_unacknowledged_bili_support_fallback(
+        self,
+        events: list[LiveDanmakuEvent],
+        *,
+        reason: str = "",
+    ) -> bool:
+        selected = [
+            event
+            for event in events
+            if event.event_type in self._bili_guaranteed_support_types()
+            and event.event_id not in self._bili_acknowledged_support_event_ids
+        ]
+        if not selected:
+            return True
+        try:
+            session_id = await self._get_bili_reply_session()
+            if not session_id:
+                logger.error("[B站直播] SC 最终兜底失败：未绑定自动回应会话")
+                return False
+            reply_text = self._build_bili_support_fallback_reply(selected)
+            await self.context.send_message(
+                session_id,
+                MessageChain([Plain(reply_text)]),
+            )
+            try:
+                await self._push_subtitle(reply_text, source="bili_live")
+            except Exception as e:
+                logger.warning(f"[B站直播] SC 兜底字幕推送失败，文字已发送: {e}")
+            self._record_bili_auto_reply_sent(selected, reply_text)
+            logger.warning(
+                "[B站直播] SC 模型链路未完成，已发送不依赖模型的文字兜底%s -> %s: %s",
+                f" ({self._single_line_text(reason, 100)})" if reason else "",
+                session_id,
+                reply_text,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[B站直播] SC 最终兜底发送失败: {e}")
+            return False
+
+    def _select_bili_reply_events(
+        self, events: list[LiveDanmakuEvent], max_events: int
+    ) -> list[LiveDanmakuEvent]:
+        """Keep every guaranteed event, then fill remaining slots with newest normal events."""
+        guaranteed = [
+            event for event in events
+            if event.event_type in self._bili_guaranteed_support_types()
+        ]
+        if not guaranteed:
+            return events[-max_events:]
+        remaining = max(0, max_events - len(guaranteed))
+        normal = [
+            event for event in events
+            if event.event_type not in self._bili_guaranteed_support_types()
+        ][-remaining:] if remaining else []
+        selected_ids = {id(event) for event in [*guaranteed, *normal]}
+        return [event for event in events if id(event) in selected_ids]
+
     def _is_bili_auto_reply_rate_exempt(self, events: list[LiveDanmakuEvent]) -> bool:
-        priority_types = self._bili_auto_reply_priority_types()
+        priority_types = self._bili_auto_reply_priority_types() | self._bili_guaranteed_support_types()
         return any(event.event_type in priority_types for event in events)
 
     def _bili_auto_reply_rate_limited(self, events: list[LiveDanmakuEvent]) -> bool:
@@ -1202,6 +1365,9 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
     ) -> None:
         self._bili_last_auto_reply_at = time.time()
         self._record_bili_auto_reply_rate_mark(events)
+        for event in events:
+            if event.event_type in self._bili_guaranteed_support_types() and event.event_id:
+                self._bili_acknowledged_support_event_ids.add(event.event_id)
         self._bili_auto_reply_history.append(
             {
                 "ts": self._bili_last_auto_reply_at,
@@ -1484,6 +1650,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         *,
         log_reason: str = "",
     ) -> None:
+        reply_text = self._ensure_bili_support_acknowledgement(reply_text, selected)
         force_voice = bool(self.config.get("bili_live_auto_reply_force_full_tts", True))
         chain = await self._decorate_bili_live_reply_chain(
             session_id,
@@ -1546,7 +1713,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             1,
             self._safe_parse_int(self.config.get("bili_live_auto_reply_max_events"), 5),
         )
-        selected_for_prebuilt = events[-max_events:]
+        selected_for_prebuilt = self._select_bili_reply_events(events, max_events)
         prebuilt_reply = self._build_bili_live_connectivity_test_reply(selected_for_prebuilt)
         if prebuilt_reply:
             await self._send_bili_live_prebuilt_reply(
@@ -1581,7 +1748,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             1,
             self._safe_parse_int(self.config.get("bili_live_auto_reply_max_events"), 5),
         )
-        selected = events[-max_events:]
+        selected = self._select_bili_reply_events(events, max_events)
         formatted = self._format_bili_events(selected)
         if not formatted:
             return
@@ -1601,7 +1768,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             f"{formatted}"
         )
         prompt += self._build_bili_support_reply_hint(selected)
-        auxiliary_context = self._build_bili_live_auxiliary_context(selected)
+        auxiliary_context = await self._build_bili_live_auxiliary_context(selected)
         if auxiliary_context:
             prompt += "\n\n" + auxiliary_context
         living_context = await self._build_living_memory_live_context(session_id, selected)
@@ -1617,6 +1784,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         reply_text = self._clean_auto_reply_text(reply_text)
         if not reply_text:
             return
+        reply_text = self._ensure_bili_support_acknowledgement(reply_text, selected)
 
         force_voice = bool(self.config.get("bili_live_auto_reply_force_full_tts", True))
         chain = await self._decorate_bili_live_reply_chain(
@@ -1655,7 +1823,8 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             1,
             self._safe_parse_int(self.config.get("bili_live_auto_reply_max_events"), 5),
         )
-        formatted = self._format_bili_events(events[-max_events:])
+        selected = self._select_bili_reply_events(events, max_events)
+        formatted = self._format_bili_events(selected)
         if not formatted:
             return False
 
@@ -1697,11 +1866,11 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             "只输出要发给直播间观众的话，不要描述发送状态、处理过程或自己的回应策略。\n\n"
             f"{formatted}"
         )
-        prompt += self._build_bili_support_reply_hint(events[-max_events:])
-        auxiliary_context = self._build_bili_live_auxiliary_context(events[-max_events:])
+        prompt += self._build_bili_support_reply_hint(selected)
+        auxiliary_context = await self._build_bili_live_auxiliary_context(selected)
         if auxiliary_context:
             prompt += "\n\n" + auxiliary_context
-        living_context = await self._build_living_memory_live_context(session_id, events[-max_events:])
+        living_context = await self._build_living_memory_live_context(session_id, selected)
         if living_context:
             prompt += "\n\n" + living_context
         if self.config.get("bili_live_auto_reply_force_full_tts", True):
@@ -1715,12 +1884,12 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                 template_event=self._bili_reply_event_template,
                 context=self.context,
                 session=session,
-                message=self._build_bili_live_memory_recall_query(events[-max_events:])
+                message=self._build_bili_live_memory_recall_query(selected)
                 or "bili_live_auto_reply_wakeup",
             )
             synthetic_event.set_extra("bili_live_auto_reply", True)
             synthetic_event.set_extra(
-                "bili_live_events", [event.raw for event in events[-max_events:]]
+                "bili_live_events", [event.raw for event in selected]
             )
             cfg = self.context.get_config(umo=session_id)
             provider_settings = cfg.get("provider_settings", {}) if isinstance(cfg, dict) else {}
@@ -1746,7 +1915,9 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             build_elapsed = time.perf_counter() - t_build
             runner = result.agent_runner
             t_llm = time.perf_counter()
-            async for _ in runner.step_until_done(20):
+            # A normal live reply needs at most a few tool turns. Keep a hard cap so a
+            # compressed tool result cannot cause an endless recall_today loop.
+            async for _ in runner.step_until_done(8):
                 pass
             llm_elapsed = time.perf_counter() - t_llm
             llm_resp = runner.get_final_llm_resp()
@@ -1755,6 +1926,15 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             reply_text = self._clean_auto_reply_text(llm_resp.completion_text or "")
             if not reply_text:
                 return False
+            if "BiliBot 今日活动（已直接读取）" in auxiliary_context and re.search(
+                r"(让我|等我).{0,6}(查|找|想|看)|我来查一下|我看看记录",
+                reply_text,
+            ):
+                logger.warning("[B站直播] native 回复仍停留在查询动作，回退直接生成最终回答。")
+                return False
+            reply_text = self._ensure_bili_support_acknowledgement(
+                reply_text, selected
+            )
             t_decorate = time.perf_counter()
             force_voice = bool(self.config.get("bili_live_auto_reply_force_full_tts", True))
             chain = await self._decorate_bili_live_reply_chain(
@@ -1777,7 +1957,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
                 await self.context.send_message(session_id, MessageChain(chain))
                 await self._push_subtitle(reply_text, source="bili_live")
             send_elapsed = time.perf_counter() - t_send
-            self._record_bili_auto_reply_sent(events[-max_events:], reply_text)
+            self._record_bili_auto_reply_sent(selected, reply_text)
             if force_voice and not synced_tts:
                 asyncio.create_task(
                     self._send_bili_live_tts_followup(
@@ -2959,6 +3139,11 @@ $player.Close()
                 "summary_count": len(store.get("summaries") if isinstance(store.get("summaries"), list) else []),
             },
             "living_memory": living_memory,
+            "bilibili_ai_memory": {
+                "enabled": bool(self.config.get("bilibili_ai_memory_integration_enabled", True)),
+                "available": self._get_bilibili_ai_bot_api() is not None,
+                "pending_writes": len(self._bilibili_ai_memory_tasks),
+            },
         }
 
     def _format_integration_status(self) -> str:
@@ -2968,6 +3153,7 @@ $player.Close()
         subtitle = payload["subtitle"]
         companion = payload["private_companion"]
         living = payload["living_memory"]
+        bilibili_ai = payload["bilibili_ai_memory"]
         lines = [
             "直播联动状态：",
             f"- B站监听：{'运行中' if live['running'] else ('已启用未运行' if live['enabled'] else '未启用')}；房间 {live['room_id'] or '未配置'}；本场事件 {live['session_events']}",
@@ -2975,6 +3161,7 @@ $player.Close()
             f"- 打字机字幕：{'运行中' if subtitle['running'] else ('已启用待启动' if subtitle['enabled'] else '未启用')}；范围 {subtitle['scope']}",
             f"- 陪伴插件：{'已连接' if companion['available'] else '未找到'}；关系线索 {'开' if companion['context_enabled'] else '关'}；写回 {'开' if companion['writeback_enabled'] else '关'}；观众画像 {companion['viewer_count']}；直播记忆 {companion['memory_count']}",
             f"- LivingMemory：{'已就绪' if living['ready'] else ('已发现但未就绪' if living['available'] else '未找到')}；召回 {'开' if living['recall_enabled'] else '关'}；top_k {living.get('top_k', 0)}；主动写入工具 {'开' if living['memorize_tool_enabled'] else '关'}",
+            f"- BiliBot 记忆：{'已连接' if bilibili_ai['available'] else ('等待插件' if bilibili_ai['enabled'] else '已关闭')}；待写入 {bilibili_ai['pending_writes']}",
         ]
         if live.get("last_error"):
             lines.append(f"- 最近监听错误：{self._single_line_text(live['last_error'], 120)}")
@@ -3433,15 +3620,192 @@ $player.Close()
             raw = ["gift", "super_chat", "buy_guard"]
         return {str(item).strip() for item in raw if str(item).strip()}
 
-    def _build_bili_live_auxiliary_context(
+    def _get_bilibili_ai_bot_api(self):
+        if not self.config.get("bilibili_ai_memory_integration_enabled", True):
+            return None
+        try:
+            getter = getattr(self.context, "get_registered_star", None)
+            plugin = getter("astrbot_plugin_bilibili_ai_bot") if callable(getter) else None
+            api = getattr(plugin, "memory_api", None)
+            if api is not None and getattr(api, "api_version", 0) >= 2:
+                return api
+        except Exception:
+            pass
+        module_names = (
+            "data.plugins.astrbot_plugin_bilibili_ai_bot.main",
+            "astrbot_plugin_bilibili_ai_bot.main",
+        )
+        for module_name in module_names:
+            try:
+                module = importlib.import_module(module_name)
+                getter = getattr(module, "get_bilibili_ai_bot_api", None)
+                api = getter() if callable(getter) else None
+                if api is not None and getattr(api, "api_version", 0) >= 2:
+                    return api
+            except Exception:
+                continue
+        return None
+
+    def _bilibili_ai_live_session_id(self) -> str:
+        room_id = self._get_current_bili_room_text()
+        started_at = int(self._bili_session_started_at or time.time())
+        return f"bili_live:{room_id}:{started_at}"
+
+    async def _record_bilibili_ai_live_event(self, event: LiveDanmakuEvent) -> None:
+        if not event.user_id or event.username == "系统":
+            return
+        allowed_types = self.config.get(
+            "bilibili_ai_memory_event_types",
+            ["danmaku", "gift", "super_chat", "buy_guard", "follow"],
+        )
+        if not isinstance(allowed_types, list) or event.event_type not in {
+            str(item).strip() for item in allowed_types
+        }:
+            return
+        if event.event_id and event.event_id in self._bilibili_ai_written_event_ids:
+            return
+        if event.event_id:
+            self._bilibili_ai_written_event_ids.add(event.event_id)
+        api = self._get_bilibili_ai_bot_api()
+        if api is None:
+            self._bilibili_ai_written_event_ids.discard(event.event_id)
+            return
+        try:
+            await api.record_live_event(
+                user_id=event.user_id,
+                username=event.username,
+                event_type=event.event_type,
+                content=event.content,
+                session_id=self._bilibili_ai_live_session_id(),
+                event_id=event.event_id,
+                room_id=self._get_current_bili_room_text(),
+                amount=event.amount,
+                extra={"backend_cmd": str((event.raw or {}).get("cmd", ""))},
+            )
+        except Exception as e:
+            self._bilibili_ai_written_event_ids.discard(event.event_id)
+            logger.warning("[B站直播] 写入 BiliBot 直播记忆失败: %s", e)
+
+    async def _build_bilibili_ai_memory_context(
+        self, events: list[LiveDanmakuEvent]
+    ) -> str:
+        api = self._get_bilibili_ai_bot_api()
+        if api is None:
+            return ""
+        by_user: dict[str, list[LiveDanmakuEvent]] = {}
+        for event in events:
+            if event.user_id and event.username != "系统":
+                by_user.setdefault(event.user_id, []).append(event)
+        if not by_user:
+            return ""
+
+        lines: list[str] = []
+        for user_id, user_events in list(by_user.items())[-3:]:
+            query = " ".join(item.content for item in user_events[-3:] if item.content).strip()
+            if not query:
+                continue
+            try:
+                recalled = await api.recall_user(
+                    user_id,
+                    query,
+                    memory_limit=3,
+                    video_limit=1,
+                    exclude_event_ids={item.event_id for item in user_events if item.event_id},
+                )
+            except Exception as e:
+                logger.debug("[B站直播] 读取 BiliBot 用户记忆失败 uid=%s: %s", user_id, e)
+                continue
+            profile = recalled.get("profile") if isinstance(recalled, dict) else {}
+            memories = recalled.get("memories") if isinstance(recalled, dict) else []
+            videos = recalled.get("video_memories") if isinstance(recalled, dict) else []
+            logger.debug(
+                "[B站直播] 已读取 BiliBot 用户画像与记忆 uid=%s profile=%s memories=%s videos=%s",
+                user_id,
+                bool(profile),
+                len(memories) if isinstance(memories, list) else 0,
+                len(videos) if isinstance(videos, list) else 0,
+            )
+            detail: list[str] = []
+            if isinstance(profile, dict):
+                if profile.get("impression"):
+                    detail.append("印象：" + self._single_line_text(profile["impression"], 100))
+                facts = profile.get("facts") if isinstance(profile.get("facts"), list) else []
+                tags = profile.get("tags") if isinstance(profile.get("tags"), list) else []
+                if facts:
+                    detail.append("事实：" + "；".join(self._single_line_text(item, 60) for item in facts[-4:]))
+                if tags:
+                    detail.append("标签：" + "、".join(self._single_line_text(item, 30) for item in tags[-6:]))
+                refs = profile.get("video_refs") if isinstance(profile.get("video_refs"), list) else []
+                if refs:
+                    titles = [
+                        self._single_line_text(item.get("title") or item.get("bvid"), 45)
+                        for item in refs[-4:] if isinstance(item, dict)
+                    ]
+                    if titles:
+                        detail.append("视频关系：" + "、".join(titles))
+            if memories:
+                detail.append("相关记忆：" + "；".join(
+                    self._single_line_text(item.get("text", ""), 110)
+                    for item in memories[:3] if isinstance(item, dict)
+                ))
+            if videos:
+                detail.append("相关视频记忆：" + "；".join(
+                    self._single_line_text(item.get("text", ""), 130)
+                    for item in videos[:1] if isinstance(item, dict)
+                ))
+            detail = [item for item in detail if item and not item.endswith("：")]
+            if detail:
+                username = self._single_line_text(user_events[-1].username, 40)
+                lines.append(f"- {username}（B站 UID {user_id}）：" + "；".join(detail))
+        if not lines:
+            return ""
+        return (
+            "## BiliBot 用户画像与记忆\n"
+            "以下内容通过当前事件携带的 B站 UID 精确关联，不是按昵称猜测。"
+            "只在与当前弹幕直接相关时自然承接；不要提 UID、画像、记忆系统或内部检索，"
+            "也不要把轻量视频关系直接解释成喜欢。\n"
+            + "\n".join(lines)
+        )
+
+    def _build_bilibili_ai_self_activity_context(
+        self, events: list[LiveDanmakuEvent]
+    ) -> str:
+        query = " ".join(str(event.content or "") for event in events[-5:])
+        if not re.search(
+            r"(今天|今日|最近|刚才).{0,12}(看|做|视频|番|动态|评论)|"
+            r"(看了什么|做了什么|最近干嘛|今天干嘛)",
+            query,
+        ):
+            return ""
+        api = self._get_bilibili_ai_bot_api()
+        if api is None or not callable(getattr(api, "activity_overview", None)):
+            return ""
+        try:
+            overview = str(api.activity_overview() or "").strip()
+        except Exception as e:
+            logger.debug("[B站直播] 直接读取 BiliBot 今日活动失败: %s", e)
+            return ""
+        if not overview:
+            return ""
+        return (
+            "## BiliBot 今日活动（已直接读取）\n"
+            "下面是 BiliBot API 已经返回的真实活动记录。请依据它直接回答当前直播问题，"
+            "不要再次调用 recall_today、recall_video 或其他用于查询今日活动的工具，"
+            "也不要只说‘让我查一下/让我想想’。用当前人设自然概括即可。\n"
+            + overview[:3200]
+        )
+
+    async def _build_bili_live_auxiliary_context(
         self, events: list[LiveDanmakuEvent]
     ) -> str:
         parts = [
             self._build_bili_live_identity_instruction(),
+            self._build_bilibili_ai_self_activity_context(events),
             self._build_live_reply_experience_guard(events),
             self._build_bili_live_continuity_context(events),
             self._build_live_stream_memory_context(events),
             self._build_private_companion_live_context(events),
+            await self._build_bilibili_ai_memory_context(events),
         ]
         return "\n\n".join(part for part in parts if part)
 
@@ -4762,9 +5126,21 @@ $player.Close()
     def _build_bili_support_reply_hint(self, events: list[LiveDanmakuEvent]) -> str:
         if not any(event.event_type in {"gift", "super_chat"} for event in events):
             return ""
+        super_chats = [event for event in events if event.event_type == "super_chat"]
+        sc_requirement = ""
+        if super_chats:
+            rows = "；".join(
+                f"{self._single_line_text(event.username, 30)}：{self._single_line_text(event.content, 100)}"
+                for event in super_chats
+            )
+            sc_requirement = (
+                "本批 SC 必须逐一说出发送者昵称并致谢；致谢后还要针对 SC 正文里的问题、"
+                f"观点或情绪做具体回应，不能只说谢谢。SC：{rows}。"
+            )
         return (
             "\n\n本批直播事件包含礼物或醒目留言。请优先感谢送礼物/SC 的观众，"
             "自然提到观众名和礼物或 SC 内容；不要机械复读数量，不要像播报清单。"
+            + sc_requirement
         )
 
     async def _inject_bili_live_context(
@@ -4792,7 +5168,7 @@ $player.Close()
             "不要伪造未列出的弹幕、礼物或观众行为。\n"
             f"{formatted}"
         )
-        auxiliary_context = self._build_bili_live_auxiliary_context(events)
+        auxiliary_context = await self._build_bili_live_auxiliary_context(events)
         if auxiliary_context:
             prompt += "\n\n" + auxiliary_context
         req.system_prompt += "\n\n" + prompt + "\n"

@@ -311,6 +311,18 @@ https://github.com/Zarosmm/obs-bilibili-stream/releases
 - 两个条件都满足，才会调用 OBS `StartStream`。
 - 当前版本只会拟定直播标题并放进主动上下文，不会直接调用 B 站接口设置真实直播间标题。
 
+## 与 Bilibili AI Bot 联动
+
+同一 AstrBot 中安装 `astrbot_plugin_bilibili_ai_bot` 1.3.1+ 后，直播插件会使用弹幕事件
+自带的 B站 UID 做精确联动，不依赖昵称猜测身份。
+
+- 收到弹幕、礼物、SC、上舰等事件后，将事件写入 BiliBot 的直播向量记忆，并更新该 UID 的画像统计。
+- 自动回应前读取该 UID 的画像与相关交流/直播记忆；视频详细内容只从该用户关联的视频集合里按语义召回。
+- 观众询问“今天/最近看了什么”时，直播插件会在生成前直接读取 BiliBot 活动记忆，避免 Agent 重复调用查询工具。
+- 用户画像只使用轻量视频关系，不把整段视频总结复制进画像。
+- 可通过 `bilibili_ai_memory_integration_enabled` 关闭；未安装 BiliBot 时自动跳过，不影响直播功能。
+- 开启直播自动回应后，SC 默认不受普通事件列表、冷却、最少事件数、读空气或每分钟限流影响；同一事件 ID 只鸣谢一次，并会点名发送者后继续回应 SC 正文。
+
 ## 拓展页
 
 插件提供 AstrBot Pages 拓展页：
