@@ -43,6 +43,7 @@ from .vts_client import (
     VTSClient,
     VTSClientError,
     VTSConnectionError,
+    VTSRealtimeClient,
     VTSTimeoutError,
 )
 from .vts_discovery import auto_discover, get_install_info
@@ -58,13 +59,115 @@ from .bilibili_live import (
 )
 from .l2d_mixin import Live2DMixin
 from .mouth_sync_mixin import MouthSyncMixin
+from .soullink_mixin import SoullinkMixin
+from .soullink_runtime import SoullinkRuntimeBridge
 from .subtitle_mixin import SubtitleMixin
+from .vts_parameter_scheduler import VTSParameterScheduler
 
 # 默认配置
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 8001
 KV_KEY_TOKEN = "vts_auth_token"
 KV_KEY_BILI_REPLY_SESSION = "bili_live_reply_session"
+_active_live_stream_companion: Any | None = None
+
+
+def get_live_stream_companion_api() -> Any | None:
+    plugin = _active_live_stream_companion
+    return getattr(plugin, "extension_api", None) if plugin is not None else None
+
+
+class LiveStreamCompanionExtensionAPI:
+    """Small public surface for other companion plugins."""
+
+    def __init__(self, plugin: "VTubeStudioPlugin") -> None:
+        self._plugin = plugin
+
+    async def push_external_subtitle(self, text: str, *, source: str = "external") -> bool:
+        if not self._plugin._is_subtitle_enabled():
+            return False
+        await self._plugin._push_subtitle(text, source=source)
+        return True
+
+    async def start_external_mouth_sync(self, audio_path: str, *, source: str = "external") -> bool:
+        plugin = self._plugin
+        path = plugin._normalize_local_audio_path(audio_path)
+        if not path or not plugin._is_mouth_sync_enabled():
+            return False
+        source_key = str(source or "external").strip()[:80] or "external"
+
+        async def run() -> None:
+            prepared_path = path
+            cleanup_path = ""
+            try:
+                if Path(path).suffix.lower() != ".wav":
+                    ffmpeg = shutil.which("ffmpeg")
+                    if not ffmpeg:
+                        logger.debug("[嘴型] 外部音频不是 wav 且未找到 ffmpeg，跳过嘴型联动")
+                        return
+                    cleanup_path = str(
+                        Path(path).with_name(f"{Path(path).stem}.mouth-{uuid.uuid4().hex[:8]}.wav")
+                    )
+                    result = await asyncio.to_thread(
+                        subprocess.run,
+                        [
+                            ffmpeg,
+                            "-y",
+                            "-loglevel",
+                            "error",
+                            "-i",
+                            path,
+                            "-ac",
+                            "1",
+                            "-ar",
+                            "24000",
+                            cleanup_path,
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                    )
+                    if result.returncode != 0 or not os.path.isfile(cleanup_path):
+                        return
+                    prepared_path = cleanup_path
+                await plugin._run_mouth_sync(prepared_path)
+            finally:
+                if cleanup_path:
+                    try:
+                        os.remove(cleanup_path)
+                    except OSError:
+                        pass
+
+        task = asyncio.create_task(run())
+        plugin._mouth_sync_tasks.add(task)
+        tasks = plugin._external_mouth_sync_tasks.setdefault(source_key, set())
+        tasks.add(task)
+
+        def finish(finished: asyncio.Task) -> None:
+            plugin._mouth_sync_tasks.discard(finished)
+            source_tasks = plugin._external_mouth_sync_tasks.get(source_key)
+            if isinstance(source_tasks, set):
+                source_tasks.discard(finished)
+                if not source_tasks:
+                    plugin._external_mouth_sync_tasks.pop(source_key, None)
+            try:
+                finished.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.debug("[嘴型] 外部音频嘴型任务失败: %s", exc)
+
+        task.add_done_callback(finish)
+        return True
+
+    async def stop_external_mouth_sync(self, *, source: str = "external") -> int:
+        source_key = str(source or "external").strip()[:80] or "external"
+        tasks = list(self._plugin._external_mouth_sync_tasks.pop(source_key, set()))
+        for task in tasks:
+            if isinstance(task, asyncio.Task) and not task.done():
+                task.cancel()
+        return len(tasks)
 
 class SyntheticBiliLiveWakeEvent(AstrMessageEvent):
     def __init__(
@@ -109,14 +212,17 @@ class SyntheticBiliLiveWakeEvent(AstrMessageEvent):
     "astrbot_plugin_live_stream_companion",
     "menglimi",
     "B 站直播弹幕读取、自动回应、Live2D 表情动作、OBS 字幕和 TTS 嘴型联动",
-    "1.7.0",
+    "1.8.0",
     "https://github.com/menglimi/astrbot_plugin_live_stream_companion",
 )
-class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
+class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixin, Star):
     """直播陪伴与 Live2D 演出控制插件"""
 
     def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)
+        global _active_live_stream_companion
+        _active_live_stream_companion = self
+        self.extension_api = LiveStreamCompanionExtensionAPI(self)
         self.config = config or {}
 
         self._auto_discover: bool = self.config.get("auto_discover", True)
@@ -131,6 +237,8 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         self._bili_debug_mode: bool = bool(self.config.get("bili_live_debug_log", False))
         self._l2d_tasks: set[asyncio.Task] = set()
         self._mouth_sync_tasks: set[asyncio.Task] = set()
+        self._soullink_tasks: set[asyncio.Task] = set()
+        self._external_mouth_sync_tasks: dict[str, set[asyncio.Task]] = {}
         self._bili_live_client: Optional[
             BilibiliBlivedmClient
             | BilibiliLaplaceClient
@@ -178,6 +286,30 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             plugin_name="AstrBot Live Stream Companion",
             plugin_developer="menglimi",
         )
+        # Keep high-frequency parameter frames off the command/query socket.
+        # Slow model queries must not make VTS release realtime tracking inputs.
+        self._parameter_vts = VTSRealtimeClient(
+            host=self._manual_host or DEFAULT_HOST,
+            port=self._manual_port or DEFAULT_PORT,
+            plugin_name="AstrBot Live Stream Companion",
+            plugin_developer="menglimi",
+        )
+        self._vts_parameter_scheduler = VTSParameterScheduler(
+            self._parameter_vts,
+            self._check_parameter_connection,
+            fps=self._safe_parse_int(
+                self.config.get("soullink_fps")
+                if self.config.get("soullink_enabled", False)
+                else self.config.get("mouth_sync_fps"),
+                20,
+            ),
+        )
+        self._soullink_runtime = SoullinkRuntimeBridge(
+            fps=self._safe_parse_int(self.config.get("soullink_fps"), 20),
+            node_path=str(self.config.get("soullink_node_path") or ""),
+            on_frame=self._on_soullink_frame,
+        )
+        self._soullink_last_vts_parameters: list[dict[str, Any]] = []
         self._connected = False
 
     def _register_page_api_if_available(self) -> None:
@@ -210,14 +342,23 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         """插件启动时：自动发现 VTS 位置，然后尝试认证连接"""
         try:
             host, port = await self._discover()
-            self.vts.url = f"ws://{host}:{port}"
+            vts_url = f"ws://{host}:{port}"
+            self.vts.url = vts_url
+            self._parameter_vts.url = vts_url
             # 使用公开方法重置连接，不直接操作私有属性
-            await self.vts.reset_connection()
+            await asyncio.gather(
+                self.vts.reset_connection(),
+                self._parameter_vts.reset_connection(),
+            )
 
             if self._auto_connect:
                 await self._try_connect()
+                await self._refresh_soullink_vts_input_catalog()
             else:
                 logger.info("[VTS] auto_connect 关闭，跳过自动连接")
+
+            self._vts_parameter_scheduler.start()
+            await self._start_soullink_runtime()
 
             await self._start_subtitle_server_if_enabled()
             await self._ensure_bili_area_cache()
@@ -237,9 +378,11 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
 
     async def terminate(self):
         """插件卸载/停用时：断开 VTS 连接，清理资源"""
+        global _active_live_stream_companion
         try:
             await self._cancel_task_set(self._l2d_tasks)
             await self._cancel_task_set(self._mouth_sync_tasks)
+            await self._cancel_task_set(self._soullink_tasks)
             await self._cancel_task_set(self._bilibili_ai_memory_tasks)
             await self._cancel_task_attr("_bili_auto_reply_task")
             await self._cancel_task_attr("_bili_area_load_task")
@@ -254,10 +397,18 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
             self._unregister_private_companion_proactive_abilities()
             await self._stop_bili_live()
             await self._stop_subtitle_server()
-            await self.vts.disconnect()
+            await self._stop_soullink_runtime()
+            await self._vts_parameter_scheduler.stop()
+            await asyncio.gather(
+                self.vts.disconnect(),
+                self._parameter_vts.disconnect(),
+            )
             logger.info("[VTS] 插件已卸载，VTS 连接已关闭")
         except Exception as e:
             logger.warning(f"[VTS] 卸载时断开连接失败: {e}")
+        finally:
+            if _active_live_stream_companion is self:
+                _active_live_stream_companion = None
 
     async def _cancel_task_set(self, tasks: set[asyncio.Task]) -> None:
         pending = [task for task in list(tasks) if not task.done()]
@@ -312,7 +463,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
 
     async def _check_and_reconnect(self) -> bool:
         """检查连接状态，必要时尝试重连"""
-        if self.vts.is_connected:
+        if self.vts.is_authenticated:
             return True
         try:
             saved_token = await self._load_token()
@@ -324,6 +475,18 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, Star):
         except Exception:
             pass
         self._connected = False
+        return False
+
+    async def _check_parameter_connection(self) -> bool:
+        """Keep the dedicated realtime parameter socket authenticated."""
+        if self._parameter_vts.is_authenticated:
+            return True
+        try:
+            saved_token = await self._load_token()
+            if saved_token:
+                return bool(await self._parameter_vts.authenticate(saved_token))
+        except Exception:
+            pass
         return False
 
     # ------------------------------------------------------------------ #
@@ -5468,6 +5631,8 @@ $player.Close()
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
         """在模型回复前注入直播弹幕上下文和可选 Live2D 标签说明。"""
         await self._inject_bili_live_context(event, req)
+        self._inject_vts_command_fallback_instruction(event, req)
+        self._inject_soullink_prompt_instruction(req)
 
         if not self.config.get("autonomous_l2d_enabled", True):
             return
@@ -5501,12 +5666,32 @@ $player.Close()
 
         req.system_prompt += "\n\n" + "\n".join(lines) + "\n"
 
+    def _inject_vts_command_fallback_instruction(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ) -> None:
+        """避免 VTS 命令未路由时，模型编造跨平台操作指引。"""
+        message = re.sub(r"\s+", " ", str(getattr(event, "message_str", "") or "")).strip()
+        if not re.fullmatch(r"/?vts_auth", message, flags=re.IGNORECASE):
+            return
+        req.system_prompt += (
+            "\n\n## VTS 命令上下文\n"
+            "当前消息已经在本次 AstrBot 会话中收到，不要声称用户必须去 QQ 或另一个聊天窗口重复发送。"
+            "如果系统没有返回‘正在向 VTube Studio 申请认证 Token’的命令处理提示，"
+            "请如实说明 `/vts_auth` 没有被插件命令处理器接管，并建议用户重载或重启 AstrBot 后重试；"
+            "不要假装已经申请 Token，也不要把当前会话说成‘不是 QQ’。\n"
+        )
+
     @filter.on_llm_response(priority=2000)
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
         """处理模型回复中的 Live2D 标签。字幕会在最终消息链阶段推送。"""
         completion_text = getattr(resp, "completion_text", None)
         if not isinstance(completion_text, str) or not completion_text.strip():
             return
+
+        soullink_cleaned = self._handle_soullink_response(completion_text)
+        if soullink_cleaned != completion_text:
+            resp.completion_text = soullink_cleaned
+        completion_text = soullink_cleaned
 
         if self.config.get("autonomous_l2d_enabled", True) and "<l2d" in completion_text.lower():
             tags, cleaned = self._parse_l2d_tags(completion_text)
@@ -5517,6 +5702,48 @@ $player.Close()
             if tags:
                 max_tags = int(self.config.get("l2d_max_tags_per_reply", 1) or 1)
                 self._create_l2d_task(self._trigger_l2d_tags(tags[: max(1, max_tags)]))
+
+    @filter.command("soullink_status")
+    async def cmd_soullink_status(self, event: AstrMessageEvent):
+        """查看可选 Soullink Emotion 运行状态。"""
+        status = self._soullink_status()
+        snapshot = status.get("snapshot") if isinstance(status.get("snapshot"), dict) else {}
+        intent = snapshot.get("intent") if isinstance(snapshot.get("intent"), dict) else {}
+        yield event.plain_result(
+            "Soullink Emotion：\n"
+            f"• 配置：{'已启用' if status.get('enabled') else '未启用'}\n"
+            f"• 运行时：{'运行中' if status.get('running') else '未运行'}\n"
+            f"• 模式：{status.get('mode', 'emotion')}\n"
+            f"• 风格：{status.get('style', 'natural')}\n"
+            f"• 当前情绪：{intent.get('emotion') or 'neutral'}\n"
+            f"• 已接收帧：{status.get('frames_received', 0)}\n"
+            f"• VTS 参数：{len(status.get('vts_parameters') or [])}\n"
+            f"• 最近错误：{status.get('last_error') or '无'}"
+        )
+
+    @filter.command("soullink_test")
+    async def cmd_soullink_test(
+        self,
+        event: AstrMessageEvent,
+        emotion: str = "happy",
+        intensity: float = 0.8,
+    ):
+        """触发一次 Soullink 情绪表演。"""
+        if not self._is_soullink_enabled():
+            yield event.plain_result("Soullink 未启用，请先开启 soullink_enabled。")
+            return
+        intent = {
+            "emotion": str(emotion or "happy").strip().lower(),
+            "intensity": max(0.0, min(1.0, self._safe_parse_float(intensity, 0.8))),
+            "contextTags": ["manual_test"],
+            "sourceMessage": "AstrBot Soullink 手动测试",
+        }
+        if await self._test_soullink_intent(intent):
+            yield event.plain_result(f"已触发 Soullink 情绪：{intent['emotion']}。")
+        else:
+            yield event.plain_result(
+                f"Soullink 启动失败：{self._soullink_status().get('last_error') or '未知错误'}"
+            )
 
     @filter.on_decorating_result(priority=100000000000000000)
     async def on_subtitle_decorating_result(self, event: AstrMessageEvent):
@@ -5597,6 +5824,9 @@ $player.Close()
             if ok:
                 await self._save_token(token)
                 self._connected = True
+                await self._refresh_soullink_vts_input_catalog()
+                await self._parameter_vts.reset_connection()
+                await self._check_parameter_connection()
                 yield event.plain_result(
                     "✅ VTube Studio 认证成功！Token 已保存。\n"
                     "现在 LLM 可以控制你的 Live2D 模型了。"
@@ -5622,8 +5852,13 @@ $player.Close()
             info = get_install_info()
             host, port = await auto_discover()
 
-            self.vts.url = f"ws://{host}:{port}"
-            await self.vts.reset_connection()
+            vts_url = f"ws://{host}:{port}"
+            self.vts.url = vts_url
+            self._parameter_vts.url = vts_url
+            await asyncio.gather(
+                self.vts.reset_connection(),
+                self._parameter_vts.reset_connection(),
+            )
 
             lines = [
                 f"🖥️ 操作系统：{info['os']}",
@@ -5642,6 +5877,8 @@ $player.Close()
                 ok = await self.vts.authenticate(saved_token)
                 if ok:
                     self._connected = True
+                    await self._refresh_soullink_vts_input_catalog()
+                    await self._check_parameter_connection()
                     yield event.plain_result("🔗 已用保存的 Token 重新认证成功！")
         except Exception as e:
             yield event.plain_result(f"❌ 自动发现失败：{e}")

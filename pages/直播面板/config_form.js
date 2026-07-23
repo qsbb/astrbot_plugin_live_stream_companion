@@ -32,6 +32,14 @@ const LiveConfigForm = (() => {
     const slider = meta.slider || {};
     const options = meta.options || defaultOptionsForKey(key);
     const current = value ?? meta.default ?? "";
+    if (key === "soullink_vts_mapping") {
+      return `
+        <div class="field field-wide mapping-config-link">
+          <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
+          <button type="button" data-open-soullink-mapping>打开高级参数校准</button>
+        </div>
+      `;
+    }
     if (type === "bool") {
       return `
         <label class="field field-toggle" for="${escapeHtml(id)}">
@@ -118,6 +126,8 @@ const LiveConfigForm = (() => {
       subtitle_scope: ["bili_live", "all"],
       subtitle_position: ["bottom", "center", "top"],
       mouth_sync_mode: ["set", "add"],
+      soullink_mode: ["emotion", "full"],
+      soullink_motion_style: ["natural", "lively", "calm", "shy"],
     };
     return options[key] || [];
   }

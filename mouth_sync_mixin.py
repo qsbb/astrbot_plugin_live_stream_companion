@@ -148,7 +148,7 @@ class MouthSyncMixin:
 
     async def _drive_mouth_parameters(self, envelope: list[float], interval: float) -> None:
         open_param = str(
-            self.config.get("mouth_sync_open_parameter") or "ParamMouthOpenY"
+            self.config.get("mouth_sync_open_parameter") or "MouthOpen"
         ).strip()
         form_param = str(self.config.get("mouth_sync_form_parameter") or "").strip()
         mode = str(self.config.get("mouth_sync_mode") or "set").strip() or "set"
@@ -162,6 +162,17 @@ class MouthSyncMixin:
         )
 
         smoothed = 0.0
+        scheduler = (
+            getattr(self, "_vts_parameter_scheduler", None)
+            if mode == "set"
+            else None
+        )
+        if scheduler:
+            scheduler.set_source_fps(
+                "mouth",
+                max(5, min(30, round(1.0 / max(interval, 0.001)))),
+            )
+            scheduler.start()
         for index, value in enumerate(envelope):
             if not await self._check_and_reconnect():
                 return
@@ -174,7 +185,14 @@ class MouthSyncMixin:
                     * min(1.0, smoothed * 1.4)
                 )
                 parameters.append({"id": form_param, "value": form_value})
-            await self.vts.inject_parameters(parameters=parameters, mode=mode)
+            if scheduler:
+                scheduler.set_layer(
+                    "mouth",
+                    parameters,
+                    ttl=max(0.4, interval * 4.0),
+                )
+            else:
+                await self.vts.inject_parameters(parameters=parameters, mode=mode)
             await asyncio.sleep(interval)
 
     async def _reset_mouth_parameters(self) -> None:
@@ -183,16 +201,27 @@ class MouthSyncMixin:
         if not await self._check_and_reconnect():
             return
         open_param = str(
-            self.config.get("mouth_sync_open_parameter") or "ParamMouthOpenY"
+            self.config.get("mouth_sync_open_parameter") or "MouthOpen"
         ).strip()
         form_param = str(self.config.get("mouth_sync_form_parameter") or "").strip()
         parameters = [{"id": open_param, "value": 0.0}]
         if form_param:
             parameters.append({"id": form_param, "value": 0.0})
         try:
-            await self.vts.inject_parameters(
-                parameters=parameters,
-                mode=str(self.config.get("mouth_sync_mode") or "set").strip() or "set",
+            mode = str(self.config.get("mouth_sync_mode") or "set").strip() or "set"
+            scheduler = (
+                getattr(self, "_vts_parameter_scheduler", None)
+                if mode == "set"
+                else None
             )
+            if scheduler:
+                scheduler.set_layer("mouth", parameters)
+                await scheduler.flush()
+                scheduler.clear_layer("mouth")
+            else:
+                await self.vts.inject_parameters(
+                    parameters=parameters,
+                    mode=mode,
+                )
         except Exception as e:
             logger.debug(f"[嘴型] 重置嘴型参数失败: {e}")

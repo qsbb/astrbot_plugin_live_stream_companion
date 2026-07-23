@@ -38,6 +38,11 @@ class LiveStreamCompanionPageApi:
             ("/config/schema", self.get_config_schema, ["GET"], "Live Stream Companion config schema"),
             ("/config/save", self.save_config, ["POST"], "Live Stream Companion save config"),
             ("/subtitle/preview", self.preview_subtitle, ["POST"], "Live Stream Companion subtitle preview"),
+            ("/soullink/status", self.get_soullink_status, ["GET"], "Soullink Emotion status"),
+            ("/soullink/control", self.soullink_control, ["POST"], "Soullink Emotion control"),
+            ("/soullink/vts-parameters", self.get_soullink_vts_parameters, ["GET"], "Soullink VTS parameters"),
+            ("/soullink/mapping", self.get_soullink_mapping, ["GET"], "Soullink advanced mapping"),
+            ("/soullink/mapping/apply", self.apply_soullink_mapping, ["POST"], "Soullink mapping preview and save"),
             ("/control/start", self.start_live, ["POST"], "Live Stream Companion start live"),
             ("/control/stop", self.stop_live, ["POST"], "Live Stream Companion stop live"),
             ("/control/obs/status", self.get_obs_control_status, ["GET"], "Live Stream Companion OBS control status"),
@@ -58,13 +63,14 @@ class LiveStreamCompanionPageApi:
                     "plugin": {
                         "name": PLUGIN_NAME,
                         "display_name": "我会直播圈米养你",
-                        "version": "1.7.0",
+                        "version": "1.8.0",
                     },
                     "live": self._live_summary(events, session_events),
                     "obs_control": await self._obs_control_status(check_obs_ws=True),
                     "vts": self._vts_summary(),
                     "subtitle": self._subtitle_summary(),
                     "mouth_sync": self._mouth_sync_summary(),
+                    "soullink": plugin._soullink_status(),
                     "auto_reply": self._auto_reply_summary(),
                     "companion": self._companion_summary(companion, store),
                     "memory": self._memory_summary(store),
@@ -148,6 +154,360 @@ class LiveStreamCompanionPageApi:
         except Exception as exc:
             logger.warning(f"[B站直播] 拓展页字幕预览失败: {exc}")
             return self._error(str(exc))
+
+    async def get_soullink_status(self) -> dict[str, Any]:
+        try:
+            return self._ok(self.plugin._soullink_status())
+        except Exception as exc:
+            logger.warning(f"[Soullink] 拓展页状态读取失败: {exc}")
+            return self._error(str(exc))
+
+    async def soullink_control(self) -> dict[str, Any]:
+        payload = await request.get_json(silent=True) or {}
+        action = self._single_line(payload.get("action"), 40)
+        try:
+            if action == "start":
+                if not self.plugin._is_soullink_enabled():
+                    return self._error("Soullink 尚未启用，请先在配置页开启并保存")
+                success = await self.plugin._start_soullink_runtime()
+                message = "Soullink 已启动。" if success else "Soullink 启动失败。"
+            elif action == "stop":
+                await self.plugin._stop_soullink_runtime()
+                success = True
+                message = "Soullink 已停止，原有 L2D 热键仍可使用。"
+            elif action == "reset":
+                runtime = getattr(self.plugin, "_soullink_runtime", None)
+                success = bool(runtime and runtime.running and await runtime.reset())
+                message = "情绪状态已回到中性。" if success else "Soullink 未运行。"
+            elif action == "configure":
+                runtime = getattr(self.plugin, "_soullink_runtime", None)
+                if not runtime or not runtime.running:
+                    return self._error("Soullink 未运行")
+                style = self._single_line(payload.get("style"), 20)
+                if style not in {"natural", "lively", "calm", "shy"}:
+                    return self._error("未知动作风格")
+                success = await runtime.configure(style=style)
+                message = f"实时预览已切换到 {style} 风格。"
+            elif action == "test":
+                vad = payload.get("vad") if isinstance(payload.get("vad"), dict) else {}
+                intent = {
+                    "emotion": self._single_line(payload.get("emotion") or "happy", 40).lower(),
+                    "variant": self._single_line(payload.get("variant"), 60),
+                    "intensity": max(0.0, min(1.0, self._float(payload.get("intensity"), 0.8))),
+                    "vad": {
+                        "valence": max(-1.0, min(1.0, self._float(vad.get("valence"), 0.0))),
+                        "arousal": max(-1.0, min(1.0, self._float(vad.get("arousal"), 0.0))),
+                        "dominance": max(-1.0, min(1.0, self._float(vad.get("dominance"), 0.0))),
+                    },
+                    "contextTags": ["page_test_bench"],
+                    "sourceMessage": "Soullink 实时测试台",
+                }
+                success = await self.plugin._test_soullink_intent(intent)
+                message = f"已触发 {intent['emotion']} 表演。" if success else "Soullink 触发失败。"
+            else:
+                return self._error("未知 Soullink 控制动作")
+            return self._ok(
+                {
+                    "success": success,
+                    "message": message,
+                    "status": self.plugin._soullink_status(),
+                }
+            )
+        except Exception as exc:
+            logger.warning(f"[Soullink] 拓展页控制失败: {exc}")
+            return self._error(str(exc))
+
+    async def get_soullink_vts_parameters(self) -> dict[str, Any]:
+        try:
+            catalog = await self._soullink_vts_catalog()
+            if not catalog.get("connected"):
+                return self._error("VTube Studio 未连接")
+            return self._ok(
+                {
+                    **catalog,
+                    "mapped": list(getattr(self.plugin, "_soullink_last_vts_parameters", [])),
+                }
+            )
+        except Exception as exc:
+            logger.warning(f"[Soullink] VTS 参数读取失败: {exc}")
+            return self._error(str(exc))
+
+    async def get_soullink_mapping(self) -> dict[str, Any]:
+        try:
+            mapping = self.plugin._soullink_mapping_editor_payload()
+            catalog = await self._soullink_vts_catalog(allow_disconnected=True)
+            mapping.update(catalog)
+            mapping["validation"] = self._validate_soullink_mapping(
+                mapping.get("activeMapping"),
+                catalog.get("inputs", []),
+                catalog.get("live2d", []),
+            )
+            return self._ok(mapping)
+        except Exception as exc:
+            logger.warning(f"[Soullink] 高级映射读取失败: {exc}")
+            return self._error(str(exc))
+
+    async def apply_soullink_mapping(self) -> dict[str, Any]:
+        payload = await request.get_json(silent=True) or {}
+        action = self._single_line(payload.get("action"), 30).lower()
+        try:
+            persisted = False
+            catalog = await self._soullink_vts_catalog(
+                allow_disconnected=True,
+                refresh=False,
+            )
+            if action == "discard":
+                self.plugin._clear_soullink_mapping_preview()
+                message = "已撤销未保存的映射预览。"
+            elif action == "reset":
+                self.plugin._clear_soullink_mapping_preview()
+                persisted = await self.config_manager.apply_updates(
+                    {"soullink_vts_mapping": "{}"}
+                )
+                message = "已恢复跟随插件内置映射。"
+            elif action in {"preview", "save"}:
+                mapping = self.plugin._normalize_soullink_mapping(
+                    payload.get("mapping"),
+                    strict=True,
+                )
+                if action == "preview":
+                    self.plugin._set_soullink_mapping_preview(mapping)
+                    message = "高级映射预览已应用，120 秒内未保存会自动恢复。"
+                else:
+                    self.plugin._clear_soullink_mapping_preview()
+                    serialized = json.dumps(
+                        mapping,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    persisted = await self.config_manager.apply_updates(
+                        {"soullink_vts_mapping": serialized}
+                    )
+                    message = "高级映射已保存。"
+            else:
+                return self._error("未知映射操作")
+
+            mapping_payload = self.plugin._soullink_mapping_editor_payload()
+            mapping_payload.update(catalog)
+            mapping_payload["persisted"] = persisted
+            mapping_payload["message"] = message
+            mapping_payload["validation"] = self._validate_soullink_mapping(
+                mapping_payload.get("activeMapping"),
+                catalog.get("inputs", []),
+                catalog.get("live2d", []),
+            )
+            return self._ok(mapping_payload)
+        except Exception as exc:
+            logger.warning(f"[Soullink] 高级映射操作失败: {exc}")
+            return self._error(str(exc))
+
+    async def _soullink_vts_catalog(
+        self,
+        *,
+        allow_disconnected: bool = False,
+        refresh: bool = True,
+    ) -> dict[str, Any]:
+        cached = getattr(self, "_soullink_catalog_cache", None)
+        if (
+            not refresh
+            and isinstance(cached, dict)
+            and time.monotonic() - self._float(cached.get("at")) < 30.0
+            and bool(getattr(getattr(self.plugin, "vts", None), "is_authenticated", False))
+        ):
+            return cached.get("data", {})
+        if not await self.plugin._check_and_reconnect():
+            if allow_disconnected:
+                return {
+                    "connected": False,
+                    "model": {},
+                    "inputs": [],
+                    "live2d": [],
+                    "bindingsAvailable": False,
+                }
+            return {"connected": False}
+        model_info, input_parameters, live2d_parameters = await asyncio.gather(
+            self.plugin.vts.get_model_info(),
+            self.plugin.vts.get_input_parameters(),
+            self.plugin.vts.get_live2d_parameters(),
+        )
+        bindings = self._soullink_model_bindings(model_info)
+        bindings_available = bool(bindings)
+        enriched_inputs: list[dict[str, Any]] = []
+        for item in input_parameters:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            enriched_inputs.append(
+                {
+                    **item,
+                    "usedByModel": name in bindings if bindings_available else None,
+                    "mappedOutputs": bindings.get(name, []),
+                }
+            )
+        self.plugin._set_soullink_vts_input_catalog(enriched_inputs)
+        catalog = {
+            "connected": True,
+            "model": {
+                "loaded": bool(model_info.get("modelLoaded")),
+                "id": str(model_info.get("modelID") or ""),
+                "name": str(model_info.get("modelName") or ""),
+                "vtsModelName": str(model_info.get("vtsModelName") or ""),
+            },
+            "inputs": enriched_inputs,
+            "live2d": live2d_parameters,
+            "bindingsAvailable": bindings_available,
+        }
+        self._soullink_catalog_cache = {"at": time.monotonic(), "data": catalog}
+        return catalog
+
+    def _soullink_model_bindings(
+        self,
+        model_info: dict[str, Any],
+    ) -> dict[str, list[dict[str, Any]]]:
+        vts_model_name = str(model_info.get("vtsModelName") or "").strip()
+        model_id = str(model_info.get("modelID") or "").strip()
+        if not vts_model_name:
+            return {}
+        cache = getattr(self, "_soullink_binding_cache", None)
+        cache_key = f"{model_id}:{vts_model_name}"
+        if isinstance(cache, dict) and cache.get("key") == cache_key:
+            return cache.get("bindings", {})
+        try:
+            from .vts_discovery import get_install_info
+
+            install_path = str(get_install_info().get("install_path") or "")
+            models_root = (
+                Path(install_path)
+                / "VTube Studio_Data"
+                / "StreamingAssets"
+                / "Live2DModels"
+            )
+            model_path = next(models_root.glob(f"*/{vts_model_name}"), None)
+            if model_path is None:
+                return {}
+            with model_path.open("r", encoding="utf-8") as handle:
+                model_config = json.load(handle)
+            settings = (
+                model_config.get("ParameterSettings")
+                if isinstance(model_config, dict)
+                and isinstance(model_config.get("ParameterSettings"), list)
+                else []
+            )
+            bindings: dict[str, list[dict[str, Any]]] = {}
+            for setting in settings:
+                if not isinstance(setting, dict):
+                    continue
+                input_name = str(setting.get("Input") or "").strip()
+                output_name = str(setting.get("OutputLive2D") or "").strip()
+                if not input_name or not output_name:
+                    continue
+                bindings.setdefault(input_name, []).append(
+                    {
+                        "id": output_name,
+                        "inputMin": self._float(setting.get("InputRangeLower")),
+                        "inputMax": self._float(setting.get("InputRangeUpper")),
+                        "outputMin": self._float(setting.get("OutputRangeLower")),
+                        "outputMax": self._float(setting.get("OutputRangeUpper")),
+                        "smoothing": self._float(setting.get("Smoothing")),
+                        "clampInput": bool(setting.get("ClampInput", False)),
+                        "clampOutput": bool(setting.get("ClampOutput", False)),
+                    }
+                )
+            self._soullink_binding_cache = {"key": cache_key, "bindings": bindings}
+            return bindings
+        except Exception as exc:
+            logger.debug(f"[Soullink] 读取本地 VTS 模型映射失败: {exc}")
+            return {}
+
+    def _validate_soullink_mapping(
+        self,
+        mapping: Any,
+        inputs: list[dict[str, Any]],
+        live2d: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        rules = mapping.get("rules") if isinstance(mapping, dict) and isinstance(mapping.get("rules"), list) else []
+        input_by_name = {
+            str(item.get("name") or ""): item
+            for item in inputs
+            if isinstance(item, dict) and item.get("name")
+        }
+        live2d_names = {
+            str(item.get("name") or "")
+            for item in live2d
+            if isinstance(item, dict) and item.get("name")
+        }
+        issues: list[dict[str, Any]] = []
+        target_rules: dict[str, list[dict[str, Any]]] = {}
+        active_count = 0
+        for rule in rules:
+            if not isinstance(rule, dict) or not bool(rule.get("enabled", True)):
+                continue
+            active_count += 1
+            rule_id = str(rule.get("id") or "")
+            target = str(rule.get("target") or "")
+            target_rules.setdefault(target, []).append(rule)
+            if not target:
+                issues.append({"ruleId": rule_id, "level": "error", "message": "缺少 VTS 目标输入"})
+                continue
+            input_meta = input_by_name.get(target)
+            if input_meta is None:
+                if target in live2d_names:
+                    issues.append(
+                        {
+                            "ruleId": rule_id,
+                            "level": "error",
+                            "message": f"{target} 是 Live2D 输出，不能通过 VTS API 注入；当前会安全跳过",
+                        }
+                    )
+                elif inputs:
+                    issues.append(
+                        {
+                            "ruleId": rule_id,
+                            "level": "warning",
+                            "message": f"{target} 不在当前 VTS 输入目录；当前模型会跳过，可保留给其他模型或自定义输入",
+                        }
+                    )
+                continue
+            if input_meta.get("usedByModel") is False:
+                issues.append(
+                    {
+                        "ruleId": rule_id,
+                        "level": "warning",
+                        "message": f"{target} 可写，但当前模型没有绑定任何 Live2D 输出",
+                    }
+                )
+            input_min = self._float(input_meta.get("min"), -1000000.0)
+            input_max = self._float(input_meta.get("max"), 1000000.0)
+            output_values = [
+                self._float(rule.get("outputMin")),
+                self._float(rule.get("outputNeutral")),
+                self._float(rule.get("outputMax")),
+            ]
+            if min(output_values) < input_min or max(output_values) > input_max:
+                issues.append(
+                    {
+                        "ruleId": rule_id,
+                        "level": "warning",
+                        "message": f"输出锚点超出 {target} 的 VTS 范围 {input_min:g} ~ {input_max:g}",
+                    }
+                )
+        for target, duplicates in target_rules.items():
+            if target and len(duplicates) > 1 and all(
+                str(item.get("blend") or "replace") == "replace" for item in duplicates[1:]
+            ):
+                issues.append(
+                    {
+                        "ruleId": str(duplicates[-1].get("id") or ""),
+                        "level": "warning",
+                        "message": f"{target} 被多条 replace 规则占用，最后一条会覆盖前面的值",
+                    }
+                )
+        return {
+            "activeRules": active_count,
+            "errors": sum(1 for item in issues if item["level"] == "error"),
+            "warnings": sum(1 for item in issues if item["level"] == "warning"),
+            "issues": issues,
+        }
 
     async def start_live(self) -> dict[str, Any]:
         try:
@@ -501,7 +861,7 @@ class LiveStreamCompanionPageApi:
         return {
             "enabled": bool(self.plugin.config.get("mouth_sync_enabled", False)),
             "fps": self._int(self.plugin.config.get("mouth_sync_fps"), 30),
-            "parameter": str(self.plugin.config.get("mouth_sync_open_parameter") or "ParamMouthOpenY"),
+            "parameter": str(self.plugin.config.get("mouth_sync_open_parameter") or "MouthOpen"),
         }
 
     def _auto_reply_summary(self) -> dict[str, Any]:

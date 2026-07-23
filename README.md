@@ -1,10 +1,10 @@
 # 我会直播圈米养你
 
-`astrbot_plugin_live_stream_companion` 是一个面向 AstrBot 的直播陪伴插件。它把 B 站直播弹幕、AstrBot 回复链路、VTube Studio 表情动作、OBS 字幕、TTS 嘴型和“我会永远陪着你”的主动行为连接在一起，让 Bot 可以作为虚拟主播助手参与直播。
+`astrbot_plugin_live_stream_companion` 是一个面向 AstrBot 的直播陪伴插件。它把 B 站直播弹幕、AstrBot 回复链路、可选 Soullink 连续情绪表演、VTube Studio 动作、OBS 字幕、TTS 嘴型和“我会永远陪着你”的主动行为连接在一起，让 Bot 可以作为虚拟主播助手参与直播。
 
 - 插件名：`astrbot_plugin_live_stream_companion`
 - 中文名：`我会直播圈米养你`
-- 当前版本：`1.7.0`
+- 当前版本：`1.8.0`
 - 适配平台：`aiocqhttp` / OneBot v11
 - AstrBot 版本：`>=4.16,<5`
 - 编码要求：UTF-8
@@ -40,6 +40,7 @@ B 站直播间事件 -> AstrBot 记忆/人格/工具链 -> 回复文本/语音
 | 弹幕自动回应 | 把弹幕事件投递回 AstrBot 原生事件链路，继续吃人格、世界书、记忆、TTS、分段等插件效果 |
 | VTube Studio | 自动发现、认证、列出热键/表情、触发热键、切换表情、移动模型、注入参数 |
 | 自主 Live2D | LLM 可输出 `<l2d:标签>`，插件截获后触发对应 VTS 热键 |
+| Soullink Emotion | 可选连续 VAD、FACS、Idle、视线、呼吸和动作混合；关闭或异常时保留原有热键链路 |
 | OBS 字幕 | 本地透明网页字幕层，支持打字机、淡出、描边、位置、最大长度 |
 | OBS 开播控制 | 拓展页可启动 OBS/L2DStudio、切场景、开虚拟摄像机、录制、推流 |
 | TTS 嘴型 | 等待本地 wav 语音生成后，按音量包络驱动 Live2D 嘴部参数 |
@@ -209,8 +210,8 @@ subtitle_scope = all
 
 ```text
 mouth_sync_enabled = true
-mouth_sync_open_parameter = ParamMouthOpenY
-mouth_sync_form_parameter = ParamMouthForm
+mouth_sync_open_parameter = MouthOpen
+mouth_sync_form_parameter =
 ```
 
 测试：
@@ -336,6 +337,7 @@ pages/直播面板/
 - B 站监听状态。
 - OBS 控制状态。
 - VTube Studio / 字幕 / 嘴型链路。
+- Soullink Emotion 实时测试台、VAD/FACS 状态和 VTS 参数目录。
 - 自动回应状态。
 - 直播专用记忆。
 - 观众活跃画像。
@@ -358,6 +360,8 @@ pages/直播面板/
 /vts_discover
 /vts_list
 /vts_l2d_list
+/soullink_status
+/soullink_test happy 0.8
 ```
 
 ### B 站直播
@@ -436,9 +440,35 @@ bilibili_ROOM_OWNER_AUTH_CODE
 | 配置 | 默认 | 说明 |
 |---|---:|---|
 | `mouth_sync_enabled` | `false` | 启用嘴型联动 |
-| `mouth_sync_open_parameter` | `ParamMouthOpenY` | 嘴部开闭参数 |
-| `mouth_sync_form_parameter` | `""` | 嘴型变形参数 |
+| `mouth_sync_open_parameter` | `MouthOpen` | VTS 嘴部开闭追踪输入；不能填写 Live2D 输出 ID |
+| `mouth_sync_form_parameter` | `""` | 可选 VTS 追踪输入；Soullink 启用时建议留空 |
 | `mouth_sync_fps` | `30` | 每秒推送次数 |
+
+### Soullink Emotion（可选）
+
+| 配置 | 默认 | 说明 |
+|---|---:|---|
+| `soullink_enabled` | `false` | 总开关，升级后不会改变原有行为 |
+| `soullink_mode` | `emotion` | `emotion` 使用提示词意图；`full` 也启用本地文本分类降级 |
+| `soullink_motion_style` | `natural` | `natural` / `lively` / `calm` / `shy` |
+| `soullink_fps` | `20` | VTS 实时参数帧率 |
+| `soullink_prompt_intent_enabled` | `true` | 通过提示词让模型附加不可见的结构化情绪意图 |
+| `soullink_parameter_gain` | `1.7` | 表情参数相对中性值的增益 |
+| `soullink_body_motion_gain` | `1.6` | 头部、身体与 Idle 动作增益 |
+| `soullink_vad_decay_rate` | `0.075` | 情绪回落速度 |
+| `soullink_vts_mapping` | `{}` | 高级 JSON 映射；空对象使用内置 VTS 追踪参数映射 |
+
+Soullink 需要 Node.js 18 或更高版本。插件内置固定版本的 `@soullink-emotion/engine@0.1.0-beta.1` ESM 运行文件，只在开启后启动 Node 子进程，不需要安装 `node_modules`。
+
+拓展页的“Soullink 测试台”可以：
+
+- 触发开心、兴奋、害羞、好奇、困惑、关切、难过和生气等情绪。
+- 调整强度与 VAD 三轴，并切换动作风格。
+- 查看连续 FACS 通道、当前状态和最终 VTS 输入值。
+- 读取 VTS 追踪输入及当前 Live2D 模型参数，辅助校准 `soullink_vts_mapping`。
+- 从本机选择包含 `.model3.json`、`.moc3`、纹理及关联资源的模型文件夹，在页面内直接渲染 Live2D 模型并接受当前 FACS 参数驱动；文件只在浏览器本地读取，不会上传。模型载入后可使用缩放按钮、滑杆、鼠标滚轮或移动端双指手势调整预览大小，窗口变化时会保留当前倍率。
+
+未导入模型时，测试台使用插件图像做实时状态可视化。页面内 Live2D 预览按需从 Live2D 官方地址加载 Cubism Core，因此首次导入需要网络；VTube Studio 仍负责直播时的真实模型输出。Soullink 与 TTS 嘴型共用帧调度器，嘴型只覆盖同名嘴部通道，不会中断头部、视线和表情参数。
 
 ### 陪伴插件联动
 
@@ -533,9 +563,15 @@ subtitle_server.py   透明字幕网页服务
 subtitle_mixin.py    字幕配置和推送
 mouth_sync_mixin.py  TTS 嘴型联动
 l2d_mixin.py         自主 Live2D 标签
+soullink_mixin.py    Soullink 提示词、意图解析与 VTS 参数映射
+soullink_runtime.py  Python/Node 异步运行桥
+soullink_bridge.mjs  Soullink Emotion 无头运行进程
+vts_parameter_scheduler.py  情绪与嘴型实时参数合并调度
+vendor/soullink_emotion_engine/  固定版本 Soullink Engine ESM 与 MIT 许可证
 page_api.py          拓展页后端 API
 page_config.py       拓展页配置读写
 pages/直播面板/      前端页面
+pages/直播面板/vendor/live2d_preview/  页面预览用 PIXI / Live2D 适配器及 MIT 许可证
 _conf_schema.json    AstrBot 配置 schema
 metadata.yaml        插件元数据
 ```
@@ -553,5 +589,7 @@ metadata.yaml        插件元数据
 - `blivedm`：B 站直播弹幕协议解析参考。
 - AstrBot 社区：插件框架、LLM 工具和 Pages 扩展页能力。
 - VTube Studio：Live2D 模型控制 API。
+- Soullink Emotion SDK：连续 VAD、FACS 和角色表演引擎（MIT）。
+- PixiJS / pixi-live2d-display：拓展页 Live2D 模型预览（MIT）；Cubism Core 由 Live2D 官方地址按需加载。
 
 

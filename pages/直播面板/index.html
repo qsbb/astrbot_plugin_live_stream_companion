@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>我会直播圈米养你</title>
-  <link rel="stylesheet" href="./app.css?v=20260610-live-page4" />
+  <link rel="stylesheet" href="./app.css?v=20260724-mapping-v2" />
 </head>
 <body>
   <main class="shell">
@@ -28,6 +28,7 @@
         <button class="tab" data-tab="memory">直播记忆</button>
         <button class="tab" data-tab="viewers">观众画像</button>
         <button class="tab" data-tab="events">最近事件</button>
+        <button class="tab" data-tab="soullink">Soullink 测试台</button>
         <button class="tab" data-tab="config">配置</button>
       </nav>
 
@@ -108,6 +109,167 @@
         <div id="eventRows" class="timeline"></div>
       </section>
 
+      <section class="panel" id="panel-soullink">
+        <div class="section-head soullink-head">
+          <div>
+            <h2>Soullink Emotion 实时测试台</h2>
+            <p id="soullinkSummary" class="muted">正在读取表演引擎状态...</p>
+          </div>
+          <div class="config-actions">
+            <span id="soullinkBadge" class="badge idle">未运行</span>
+            <button id="soullinkStartBtn" class="primary" type="button">启动</button>
+            <button id="soullinkStopBtn" type="button">停止</button>
+            <button id="soullinkResetBtn" type="button">复位</button>
+          </div>
+        </div>
+
+        <div class="soullink-bench">
+          <section class="soullink-monitor" aria-label="实时表演监视器">
+            <div class="monitor-toolbar">
+              <span>实时角色状态</span>
+              <div class="monitor-actions">
+                <b id="soullinkState">IDLE</b>
+                <button id="live2dImportBtn" type="button">导入 L2D</button>
+                <button id="live2dRemoveBtn" type="button" hidden>移除模型</button>
+                <input id="live2dFolderInput" class="visually-hidden" type="file" webkitdirectory directory multiple aria-label="选择 Live2D 模型文件夹" />
+              </div>
+            </div>
+            <div class="character-stage" id="soullinkCharacterStage">
+              <div class="stage-grid" aria-hidden="true"></div>
+              <div class="character-visual" id="soullinkCharacterVisual">
+                <img src="./logo.png" alt="我会直播圈米养你" />
+              </div>
+              <div id="live2dCanvasHost" class="live2d-canvas-host" hidden aria-label="Live2D 模型预览"></div>
+              <div class="emotion-readout">
+                <strong id="soullinkEmotion">neutral</strong>
+                <span id="soullinkVariant">等待情绪输入</span>
+              </div>
+            </div>
+            <div id="live2dZoomControls" class="live2d-zoom-controls" role="group" aria-label="Live2D 预览缩放" hidden>
+              <button id="live2dZoomOutBtn" type="button" title="缩小模型" aria-label="缩小模型">−</button>
+              <input id="live2dZoomSlider" type="range" min="25" max="400" step="5" value="100" aria-label="模型缩放比例" />
+              <button id="live2dZoomInBtn" type="button" title="放大模型" aria-label="放大模型">+</button>
+              <output id="live2dZoomValue" for="live2dZoomSlider">100%</output>
+              <button id="live2dZoomResetBtn" class="zoom-reset-button" type="button" title="恢复自动适配">适配</button>
+            </div>
+            <p id="live2dModelStatus" class="live2d-model-status">未导入模型，当前使用插件图像预览情绪状态。</p>
+            <div id="soullinkRuntimeMetrics" class="runtime-metrics"></div>
+            <p id="soullinkVtsNotice" class="soullink-vts-notice" role="status"></p>
+          </section>
+
+          <section class="soullink-controls">
+            <div class="control-section-head">
+              <div>
+                <h2>情绪触发</h2>
+                <p class="muted">选择预设后可继续微调强度与 VAD。</p>
+              </div>
+              <label class="compact-field">
+                <span>动作风格</span>
+                <select id="soullinkStyle">
+                  <option value="natural">自然</option>
+                  <option value="lively">活泼</option>
+                  <option value="calm">平静</option>
+                  <option value="shy">害羞</option>
+                </select>
+              </label>
+            </div>
+            <div id="soullinkPresets" class="emotion-presets" role="group" aria-label="情绪预设">
+              <button type="button" data-emotion="happy" data-v="0.72" data-a="0.46" data-d="0.34">开心</button>
+              <button type="button" data-emotion="excited" data-v="0.76" data-a="0.86" data-d="0.45">兴奋</button>
+              <button type="button" data-emotion="shy" data-v="0.48" data-a="0.36" data-d="-0.42">害羞</button>
+              <button type="button" data-emotion="curious" data-v="0.28" data-a="0.48" data-d="0.12">好奇</button>
+              <button type="button" data-emotion="confused" data-v="-0.12" data-a="0.34" data-d="-0.28">困惑</button>
+              <button type="button" data-emotion="concerned" data-v="-0.24" data-a="0.32" data-d="0.06">关切</button>
+              <button type="button" data-emotion="sad" data-v="-0.68" data-a="-0.34" data-d="-0.48">难过</button>
+              <button type="button" data-emotion="anger" data-v="-0.66" data-a="0.72" data-d="0.58">生气</button>
+              <button type="button" data-emotion="neutral" data-v="0" data-a="0" data-d="0">中性</button>
+            </div>
+            <div class="vad-controls">
+              <label>
+                <span>强度 <output id="soullinkIntensityValue">0.80</output></span>
+                <input id="soullinkIntensity" type="range" min="0" max="1" step="0.01" value="0.8" />
+              </label>
+              <label>
+                <span>Valence <output id="soullinkValenceValue">0.72</output></span>
+                <input id="soullinkValence" type="range" min="-1" max="1" step="0.01" value="0.72" />
+              </label>
+              <label>
+                <span>Arousal <output id="soullinkArousalValue">0.46</output></span>
+                <input id="soullinkArousal" type="range" min="-1" max="1" step="0.01" value="0.46" />
+              </label>
+              <label>
+                <span>Dominance <output id="soullinkDominanceValue">0.34</output></span>
+                <input id="soullinkDominance" type="range" min="-1" max="1" step="0.01" value="0.34" />
+              </label>
+            </div>
+            <button id="soullinkTriggerBtn" class="primary soullink-trigger" type="button">触发表演</button>
+          </section>
+
+          <section class="telemetry-panel">
+            <div class="section-head compact-head">
+              <h2>VAD 与 FACS</h2>
+              <span class="muted">实时更新</span>
+            </div>
+            <div id="soullinkVadMeters" class="vad-meters"></div>
+            <div id="soullinkFacsMeters" class="facs-meters"></div>
+          </section>
+
+          <section class="parameter-panel">
+            <div class="section-head compact-head">
+              <h2>VTS 参数输出</h2>
+              <div class="parameter-head-actions">
+                <button id="soullinkParamsBtn" type="button" title="需要连接 VTube Studio">读取模型参数</button>
+                <button id="soullinkMappingBtn" type="button">高级参数校准</button>
+              </div>
+            </div>
+            <div id="soullinkParameterRows" class="parameter-rows"></div>
+            <details class="parameter-details">
+              <summary>模型参数目录</summary>
+              <div id="soullinkModelParameters" class="parameter-catalog"></div>
+            </details>
+            <section id="soullinkMappingWorkbench" class="mapping-workbench" aria-labelledby="soullinkMappingTitle" hidden>
+              <div class="mapping-toolbar">
+                <div>
+                  <div class="mapping-title-line">
+                    <h3 id="soullinkMappingTitle">高级参数校准</h3>
+                    <span id="soullinkMappingMode" class="badge idle">内置</span>
+                    <span id="soullinkMappingModel" class="mapping-model"></span>
+                  </div>
+                  <p id="soullinkMappingStatus" class="mapping-status muted" role="status"></p>
+                </div>
+                <div class="mapping-toolbar-actions">
+                  <button id="soullinkMappingCaptureBtn" type="button">捕获当前中性</button>
+                  <button id="soullinkMappingAddBtn" type="button">添加规则</button>
+                  <button id="soullinkMappingResetBtn" type="button">恢复内置</button>
+                  <button id="soullinkMappingDiscardBtn" type="button" hidden>撤销预览</button>
+                  <button id="soullinkMappingSaveBtn" class="primary" type="button">保存映射</button>
+                  <button id="soullinkMappingCloseBtn" class="mapping-close-button" type="button" title="关闭高级参数校准" aria-label="关闭高级参数校准">×</button>
+                </div>
+              </div>
+
+              <div id="soullinkMappingValidation" class="mapping-validation" role="status"></div>
+
+              <details class="mapping-composites">
+                <summary>合成通道</summary>
+                <div id="soullinkCompositeFields" class="mapping-composite-grid"></div>
+              </details>
+
+              <div id="soullinkMappingRules" class="mapping-rules"></div>
+
+              <details class="mapping-json-details">
+                <summary>JSON 导入与导出</summary>
+                <textarea id="soullinkMappingJson" rows="10" spellcheck="false" aria-label="高级映射 JSON"></textarea>
+                <div class="mapping-json-actions">
+                  <button id="soullinkMappingImportBtn" type="button">应用 JSON</button>
+                  <button id="soullinkMappingCopyBtn" type="button">复制 JSON</button>
+                </div>
+              </details>
+              <datalist id="soullinkVtsInputOptions"></datalist>
+            </section>
+          </section>
+        </div>
+      </section>
+
       <section class="panel" id="panel-config">
         <div class="section-head config-head">
           <div>
@@ -130,8 +292,9 @@
 
   <div id="toast" class="toast" hidden></div>
   <script src="./page_bridge.js?v=20260610-live-page5"></script>
-  <script src="./config_model.js?v=20260707-streamer-identity"></script>
-  <script src="./config_form.js?v=20260610-live-page4"></script>
-  <script src="./app.js?v=20260707-streamer-identity"></script>
+  <script src="./config_model.js?v=20260724-mapping-v2"></script>
+  <script src="./config_form.js?v=20260724-mapping-v2"></script>
+  <script src="./live2d_preview.js?v=20260724-l2d-zoom"></script>
+  <script src="./app.js?v=20260724-mapping-v2"></script>
 </body>
 </html>

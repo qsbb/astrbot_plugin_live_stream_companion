@@ -2,14 +2,15 @@ name: astrbot_plugin_live_stream_companion
 display_name: 我会直播圈米养你
 author: menglimi
 author_url: https://github.com/menglimi
-description: astrbot_plugin_live_stream_companion 是面向 AstrBot 的直播陪伴插件，提供 B 站直播弹幕读取、分区识别、自动回应、VTube Studio 表情动作、OBS 字幕/开播控制、TTS 嘴型联动、直播记忆和陪伴插件主动开播/下播接入。
-desc: 为 AstrBot 提供 B 站弹幕、直播分区、自动回应、Live2D、OBS 字幕/开播控制、嘴型联动和直播记忆的直播陪伴插件。
+description: astrbot_plugin_live_stream_companion 是面向 AstrBot 的直播陪伴插件，提供 B 站直播弹幕读取、自动回应、可选 Soullink 连续情绪表演、VTube Studio 动作、OBS 字幕/开播控制、TTS 嘴型联动和直播记忆。
+desc: 为 AstrBot 提供 B 站弹幕、自动回应、Soullink 情绪表演、Live2D、OBS 字幕/开播控制、嘴型联动和直播记忆。
 repo: https://github.com/menglimi/astrbot_plugin_live_stream_companion
 category: 娱乐
 tags:
   - 直播
   - B站弹幕
   - Live2D
+  - Soullink
   - VTube Studio
   - 字幕
   - 嘴型联动
@@ -20,6 +21,8 @@ help: |
   - /vts_discover 重新扫描并自动发现 VTS 地址
   - /vts_list 列出所有热键和表情
   - /vts_l2d_list 查看当前启用的自主 L2D 标签
+  - /soullink_status 查看可选情绪引擎状态
+  - /soullink_test happy 0.8 测试连续情绪表演
 
   B 站直播:
   - /bili_live_start <房间号> 启动 B 站直播弹幕监听
@@ -38,7 +41,7 @@ help: |
   - /mouth_sync_test 2 测试嘴型联动
 
   初次使用建议先发送 /vts_auth 完成 VTube Studio 授权，再通过 /vts_status 和 /vts_list 检查模型热键。直播弹幕可使用 /bili_live_start <房间号> 临时启动；需要自动回应时，先发送 /bili_live_bind_here，再开启 bili_live_auto_reply_enabled。OBS 字幕默认地址为 http://127.0.0.1:18081/。如需 B 站开播推流，建议在 OBS 安装 obs-bilibili-stream。若安装“我会永远陪着你”，可在陪伴面板外部主动能力中启用主动开播/下播。
-version: 1.7.0
+version: 1.8.0
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.16,<5"

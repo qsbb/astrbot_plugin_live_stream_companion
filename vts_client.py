@@ -59,6 +59,7 @@ class VTSClient:
         self._ws = None
         self._lock = asyncio.Lock()
         self._is_connected = False
+        self._authenticated = False
 
     # ------------------------------------------------------------------ #
     #  底层通信
@@ -85,17 +86,39 @@ class VTSClient:
             # 如果连接断开则重新建立
             if self._ws is None or not self.is_connected:
                 await self._connect()
+                if message_type not in {
+                    "AuthenticationTokenRequest",
+                    "AuthenticationRequest",
+                } and self.auth_token:
+                    await self._authenticate_current_connection()
 
             payload = self._build_request(message_type, data)
             
             try:
                 await self._ws.send(payload)
+            except asyncio.CancelledError:
+                await self._force_disconnect()
+                raise
             except Exception as e:
                 # 发送失败，尝试重连一次
                 logger.warning(f"[VTS] 发送失败，尝试重连: {e}")
                 await self._force_disconnect()
                 await self._connect()
-                await self._ws.send(payload)
+                if message_type not in {
+                    "AuthenticationTokenRequest",
+                    "AuthenticationRequest",
+                } and self.auth_token:
+                    await self._authenticate_current_connection()
+                try:
+                    await self._ws.send(payload)
+                except asyncio.CancelledError:
+                    await self._force_disconnect()
+                    raise
+                except Exception as retry_error:
+                    await self._force_disconnect()
+                    raise VTSConnectionError(
+                        f"VTube Studio 重连后发送失败: {retry_error}"
+                    ) from retry_error
             
             try:
                 response_raw = await asyncio.wait_for(
@@ -108,14 +131,29 @@ class VTSClient:
                     f"VTube Studio API 请求超时（{self.DEFAULT_TIMEOUT}秒），"
                     "连接已重置，请检查 VTS 是否响应正常"
                 )
+            except asyncio.CancelledError:
+                # Do not let a late response leak into the next request.
+                await self._force_disconnect()
+                raise
+            except Exception as e:
+                await self._force_disconnect()
+                raise VTSConnectionError(f"VTube Studio 接收响应失败: {e}") from e
             
             # 安全解析 JSON
             try:
-                return json.loads(response_raw)
+                response = json.loads(response_raw)
             except json.JSONDecodeError as e:
                 logger.error(f"[VTS] 响应 JSON 解析失败: {e}")
                 await self._force_disconnect()
                 raise VTSResponseError(f"VTube Studio 返回了无效的响应格式: {e}")
+            if response.get("messageType") == "APIError":
+                error = response.get("data") if isinstance(response.get("data"), dict) else {}
+                error_id = error.get("errorID", "?")
+                error_message = error.get("message") or error.get("errorMessage") or "未知错误"
+                if error_id == 8:
+                    self._authenticated = False
+                raise VTSResponseError(f"VTube Studio APIError {error_id}: {error_message}")
+            return response
 
     async def _connect(self):
         """建立 WebSocket 连接"""
@@ -130,6 +168,7 @@ class VTSClient:
                 timeout=self.CONNECT_TIMEOUT
             )
             self._is_connected = True
+            self._authenticated = False
             logger.info("VTube Studio 连接成功")
         except asyncio.TimeoutError:
             self._is_connected = False
@@ -150,6 +189,7 @@ class VTSClient:
     async def _force_disconnect(self):
         """强制断开连接"""
         self._is_connected = False
+        self._authenticated = False
         if self._ws:
             try:
                 await self._ws.close()
@@ -159,12 +199,14 @@ class VTSClient:
 
     async def disconnect(self):
         """正常断开连接"""
-        await self._force_disconnect()
+        async with self._lock:
+            await self._force_disconnect()
         logger.info("已断开与 VTube Studio 的连接")
 
     async def reset_connection(self):
         """重置连接状态（供外部调用的公开方法）"""
-        await self._force_disconnect()
+        async with self._lock:
+            await self._force_disconnect()
         logger.info("[VTS] 连接已重置")
 
     @property
@@ -183,6 +225,49 @@ class VTSClient:
             return True
         except Exception:
             return False
+
+    @property
+    def is_authenticated(self) -> bool:
+        return self.is_connected and self._authenticated
+
+    async def _authenticate_current_connection(self) -> None:
+        """Authenticate a freshly reconnected socket while the request lock is held."""
+        if not self._ws or not self.auth_token:
+            raise VTSConnectionError("VTube Studio 重连后缺少认证 Token")
+        payload = self._build_request(
+            "AuthenticationRequest",
+            {
+                "pluginName": self.plugin_name,
+                "pluginDeveloper": self.plugin_developer,
+                "authenticationToken": self.auth_token,
+            },
+        )
+        try:
+            await self._ws.send(payload)
+            response_raw = await asyncio.wait_for(
+                self._ws.recv(), timeout=self.DEFAULT_TIMEOUT
+            )
+            response = json.loads(response_raw)
+        except asyncio.CancelledError:
+            await self._force_disconnect()
+            raise
+        except (asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            await self._force_disconnect()
+            raise VTSConnectionError(f"VTube Studio 重连认证失败: {exc}") from exc
+        except Exception as exc:
+            await self._force_disconnect()
+            raise VTSConnectionError(f"VTube Studio 重连认证失败: {exc}") from exc
+        if response.get("messageType") == "APIError":
+            await self._force_disconnect()
+            error = response.get("data") if isinstance(response.get("data"), dict) else {}
+            raise VTSResponseError(
+                f"VTube Studio 重连认证失败: {error.get('message') or error.get('errorMessage') or '未知错误'}"
+            )
+        authenticated = bool(response.get("data", {}).get("authenticated", False))
+        self._authenticated = authenticated
+        if not authenticated:
+            await self._force_disconnect()
+            raise VTSConnectionError("VTube Studio 重连认证未通过")
 
     # ------------------------------------------------------------------ #
     #  认证
@@ -216,6 +301,7 @@ class VTSClient:
             },
         )
         authenticated = resp.get("data", {}).get("authenticated", False)
+        self._authenticated = bool(authenticated)
         if authenticated:
             logger.info("VTS 认证成功")
         else:
@@ -239,7 +325,40 @@ class VTSClient:
     async def get_input_parameters(self) -> List[Dict[str, Any]]:
         """获取所有可用的输入参数"""
         resp = await self._send_request("InputParameterListRequest", {})
+        data = resp.get("data", {})
+        parameters: List[Dict[str, Any]] = []
+        for kind, key in (("default", "defaultParameters"), ("custom", "customParameters")):
+            for item in data.get(key, []) or []:
+                if isinstance(item, dict):
+                    parameters.append({**item, "kind": kind})
+        return parameters
+
+    async def get_live2d_parameters(self) -> List[Dict[str, Any]]:
+        """获取当前模型的 Live2D 输出参数，用于校准输入映射。"""
+        resp = await self._send_request("Live2DParameterListRequest", {})
         return resp.get("data", {}).get("parameters", [])
+
+    async def create_parameter(
+        self,
+        name: str,
+        *,
+        explanation: str = "",
+        minimum: float = -1.0,
+        maximum: float = 1.0,
+        default_value: float = 0.0,
+    ) -> Dict[str, Any]:
+        """创建或刷新一个由本插件拥有的 VTS 自定义追踪参数。"""
+        resp = await self._send_request(
+            "ParameterCreationRequest",
+            {
+                "parameterName": name,
+                "explanation": explanation[:255],
+                "min": float(minimum),
+                "max": float(maximum),
+                "defaultValue": float(default_value),
+            },
+        )
+        return resp.get("data", {})
 
     async def get_model_info(self) -> Dict[str, Any]:
         """获取当前加载的模型信息"""
@@ -312,3 +431,110 @@ class VTSClient:
         )
         logger.info(f"移动模型 pos=({position_x},{position_y})")
         return resp.get("data", {})
+
+
+class VTSRealtimeClient(VTSClient):
+    """VTS client that drains injection acknowledgements off the send cadence."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._response_task: asyncio.Task | None = None
+        self._stream_error = ""
+
+    async def authenticate(self, token: str) -> bool:
+        await self._stop_response_drain()
+        authenticated = await super().authenticate(token)
+        if authenticated:
+            self._start_response_drain()
+        return authenticated
+
+    def _start_response_drain(self) -> None:
+        if self._response_task is None or self._response_task.done():
+            self._response_task = asyncio.create_task(self._drain_responses())
+
+    async def _stop_response_drain(self) -> None:
+        task = self._response_task
+        self._response_task = None
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _force_disconnect(self):
+        await self._stop_response_drain()
+        await super()._force_disconnect()
+
+    async def _drop_stream_socket(self, socket) -> None:
+        if self._ws is not socket:
+            return
+        self._is_connected = False
+        self._authenticated = False
+        self._ws = None
+        try:
+            await socket.close()
+        except Exception:
+            pass
+
+    async def _drain_responses(self) -> None:
+        socket = self._ws
+        current_task = asyncio.current_task()
+        try:
+            while socket is not None and self._ws is socket:
+                response_raw = await socket.recv()
+                try:
+                    response = json.loads(response_raw)
+                except json.JSONDecodeError as exc:
+                    self._stream_error = f"VTube Studio 返回了无效的响应格式: {exc}"
+                    continue
+                if response.get("messageType") != "APIError":
+                    continue
+                error = response.get("data") if isinstance(response.get("data"), dict) else {}
+                error_id = error.get("errorID", "?")
+                error_message = error.get("message") or error.get("errorMessage") or "未知错误"
+                self._stream_error = (
+                    f"VTube Studio APIError {error_id}: {error_message}"
+                )
+                if error_id == 8:
+                    await self._drop_stream_socket(socket)
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._stream_error = f"VTube Studio 实时响应连接中断: {exc}"
+            await self._drop_stream_socket(socket)
+        finally:
+            if self._response_task is current_task:
+                self._response_task = None
+
+    async def inject_parameters(
+        self,
+        parameters: List[Dict[str, Any]],
+        mode: str = "set",
+        face_found: bool = True,
+    ) -> Dict[str, Any]:
+        async with self._lock:
+            if not self.is_authenticated or self._ws is None:
+                raise VTSConnectionError("VTube Studio 实时参数连接未认证")
+            if self._stream_error:
+                error = self._stream_error
+                self._stream_error = ""
+                raise VTSResponseError(error)
+            self._start_response_drain()
+            payload = self._build_request(
+                "InjectParameterDataRequest",
+                {
+                    "faceFound": face_found,
+                    "mode": mode,
+                    "parameterValues": parameters,
+                },
+            )
+            try:
+                await self._ws.send(payload)
+            except asyncio.CancelledError:
+                await self._force_disconnect()
+                raise
+            except Exception as exc:
+                await self._force_disconnect()
+                raise VTSConnectionError(
+                    f"VTube Studio 实时参数发送失败: {exc}"
+                ) from exc
+            return {}

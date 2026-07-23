@@ -32,7 +32,11 @@ class SubtitleMixin:
     def _source_should_push_subtitle(self, source: str = "") -> bool:
         if self._subtitle_scope() == "all":
             return True
-        return str(source or "").strip().lower() in {"bili_live", "manual", "preview"}
+        normalized = str(source or "").strip().lower()
+        if normalized == "together_companion":
+            checker = getattr(self, "_is_bili_live_running", None)
+            return bool(callable(checker) and checker())
+        return normalized in {"bili_live", "manual", "preview"}
 
     def _get_subtitle_style(self) -> dict[str, Any]:
         return {

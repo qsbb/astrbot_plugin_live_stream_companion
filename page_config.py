@@ -59,10 +59,11 @@ class PageConfigManager:
 
     async def apply_updates(self, updates: dict[str, Any]) -> bool:
         subtitle_before = self.subtitle_snapshot()
+        stage_before = self.stage_snapshot()
         for key, value in updates.items():
             self.plugin.config[key] = value
         persisted = await self.persist()
-        await self.sync_runtime_after_change(subtitle_before)
+        await self.sync_runtime_after_change(subtitle_before, stage_before)
         return persisted
 
     def read_schema(self) -> dict[str, Any]:
@@ -119,25 +120,38 @@ class PageConfigManager:
             if key.startswith("subtitle_")
         }
 
-    async def sync_runtime_after_change(self, subtitle_before: dict[str, Any]) -> None:
+    def stage_snapshot(self) -> dict[str, Any]:
+        return {
+            key: self.plugin.config.get(key)
+            for key in self.editable_keys()
+            if key.startswith("soullink_") or key in {"mouth_sync_fps", "mouth_sync_mode"}
+        }
+
+    async def sync_runtime_after_change(
+        self,
+        subtitle_before: dict[str, Any],
+        stage_before: dict[str, Any],
+    ) -> None:
         subtitle_after = self.subtitle_snapshot()
-        if subtitle_before == subtitle_after:
-            return
-        server = getattr(self.plugin, "_subtitle_server", None)
-        subtitle_enabled = bool(self.plugin.config.get("subtitle_enabled", False))
-        if subtitle_enabled:
-            if server is None:
-                await self.plugin._start_subtitle_server_if_enabled()
-            else:
-                host = str(self.plugin.config.get("subtitle_host") or "127.0.0.1")
-                port = self._int(self.plugin.config.get("subtitle_port"), 18081)
-                if getattr(server, "host", "") != host or getattr(server, "port", 0) != port:
-                    await self.plugin._stop_subtitle_server()
+        if subtitle_before != subtitle_after:
+            server = getattr(self.plugin, "_subtitle_server", None)
+            subtitle_enabled = bool(self.plugin.config.get("subtitle_enabled", False))
+            if subtitle_enabled:
+                if server is None:
                     await self.plugin._start_subtitle_server_if_enabled()
                 else:
-                    server.style = self.plugin._get_subtitle_style()
-        elif server is not None:
-            await self.plugin._stop_subtitle_server()
+                    host = str(self.plugin.config.get("subtitle_host") or "127.0.0.1")
+                    port = self._int(self.plugin.config.get("subtitle_port"), 18081)
+                    if getattr(server, "host", "") != host or getattr(server, "port", 0) != port:
+                        await self.plugin._stop_subtitle_server()
+                        await self.plugin._start_subtitle_server_if_enabled()
+                    else:
+                        server.style = self.plugin._get_subtitle_style()
+            elif server is not None:
+                await self.plugin._stop_subtitle_server()
+
+        if stage_before != self.stage_snapshot():
+            await self.plugin._sync_soullink_runtime()
 
     @staticmethod
     def editable_keys() -> list[str]:
@@ -247,6 +261,17 @@ class PageConfigManager:
             "mouth_sync_noise_gate",
             "mouth_sync_form_strength",
             "mouth_sync_mode",
+            "soullink_enabled",
+            "soullink_mode",
+            "soullink_motion_style",
+            "soullink_fps",
+            "soullink_prompt_intent_enabled",
+            "soullink_local_fallback_enabled",
+            "soullink_parameter_gain",
+            "soullink_body_motion_gain",
+            "soullink_vad_decay_rate",
+            "soullink_node_path",
+            "soullink_vts_mapping",
         ]
 
     @staticmethod
@@ -385,9 +410,20 @@ class PageConfigManager:
             },
             {
                 "id": "stage",
-                "title": "嘴型联动",
-                "description": "TTS 音量包络到 VTS 参数。",
+                "title": "Soullink 与嘴型",
+                "description": "可选连续情绪表演引擎、VTS 参数映射和 TTS 嘴型。",
                 "keys": [
+                    "soullink_enabled",
+                    "soullink_mode",
+                    "soullink_motion_style",
+                    "soullink_fps",
+                    "soullink_prompt_intent_enabled",
+                    "soullink_local_fallback_enabled",
+                    "soullink_parameter_gain",
+                    "soullink_body_motion_gain",
+                    "soullink_vad_decay_rate",
+                    "soullink_node_path",
+                    "soullink_vts_mapping",
                     "mouth_sync_enabled",
                     "mouth_sync_open_parameter",
                     "mouth_sync_form_parameter",

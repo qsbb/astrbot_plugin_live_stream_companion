@@ -127,9 +127,20 @@ const FALLBACK_CONFIG_GROUPS = [
   },
   {
     id: "stage",
-    title: "嘴型联动",
-    description: "TTS 音频驱动 VTube Studio 嘴部参数。",
+    title: "Soullink 与嘴型",
+    description: "连续情绪表演、VTS 参数映射和 TTS 嘴型。",
     keys: [
+      "soullink_enabled",
+      "soullink_mode",
+      "soullink_motion_style",
+      "soullink_fps",
+      "soullink_prompt_intent_enabled",
+      "soullink_local_fallback_enabled",
+      "soullink_parameter_gain",
+      "soullink_body_motion_gain",
+      "soullink_vad_decay_rate",
+      "soullink_node_path",
+      "soullink_vts_mapping",
       "mouth_sync_enabled",
       "mouth_sync_open_parameter",
       "mouth_sync_form_parameter",
@@ -144,6 +155,18 @@ const FALLBACK_CONFIG_GROUPS = [
 ];
 
 const FALLBACK_CONFIG_SCHEMA = {
+  soullink_enabled: { description: "启用 Soullink Emotion 实时表演引擎", type: "bool", default: false },
+  soullink_mode: { description: "Soullink 运行模式", type: "string", default: "emotion", options: ["emotion", "full"] },
+  soullink_motion_style: { description: "Soullink 动作风格", type: "string", default: "natural", options: ["natural", "lively", "calm", "shy"] },
+  soullink_fps: { description: "Soullink 实时帧率", type: "int", default: 20, slider: { min: 5, max: 30, step: 1 } },
+  soullink_prompt_intent_enabled: { description: "通过提示词生成 Soullink 情绪意图", type: "bool", default: true },
+  soullink_local_fallback_enabled: { description: "缺少情绪意图时使用本地分类", type: "bool", default: false },
+  soullink_parameter_gain: { description: "Soullink 表情参数增益", type: "float", default: 1.7, slider: { min: 0.4, max: 5, step: 0.05 } },
+  soullink_body_motion_gain: { description: "Soullink 头部与身体动作增益", type: "float", default: 1.6, slider: { min: 0, max: 4, step: 0.05 } },
+  soullink_vad_decay_rate: { description: "Soullink 情绪衰减速度", type: "float", default: 0.075, slider: { min: 0, max: 0.2, step: 0.001 } },
+  soullink_node_path: { description: "Node.js 路径（可选）", type: "string", default: "" },
+  soullink_vts_mapping: { description: "Soullink 到 VTS 参数映射（高级）", type: "text", default: "{}", hint: "请在 Soullink 实时测试台的高级参数校准中编辑" },
+
   bilibili_enabled: { description: "启用 B站直播功能", type: "bool", default: false },
   bilibili_type: { description: "B站直播监听类型", type: "string", default: "web", options: ["web", "laplace", "open_live"] },
   bilibili_room_id: { description: "B站直播房间号", type: "int", default: 0 },
@@ -241,7 +264,7 @@ const FALLBACK_CONFIG_SCHEMA = {
   subtitle_strip_html_tags: { description: "字幕清理尖括号标签", type: "bool", default: true },
 
   mouth_sync_enabled: { description: "启用 TTS 语音嘴型联动", type: "bool", default: false },
-  mouth_sync_open_parameter: { description: "嘴部开闭参数", type: "string", default: "ParamMouthOpenY" },
+  mouth_sync_open_parameter: { description: "嘴部开闭参数", type: "string", default: "MouthOpen" },
   mouth_sync_form_parameter: { description: "嘴型变形参数（可选）", type: "string", default: "" },
   mouth_sync_fps: { description: "嘴型更新帧率", type: "int", default: 30, slider: { min: 5, max: 60, step: 1 } },
   mouth_sync_gain: { description: "嘴型音量增益", type: "float", default: 1.6, slider: { min: 0.1, max: 5, step: 0.1 } },
