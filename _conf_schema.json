@@ -189,6 +189,12 @@
     "hint": "请在 Soullink 实时测试台的高级参数校准中编辑；{} 会持续跟随插件内置映射",
     "default": "{}"
   },
+  "soullink_gaze_enabled": {
+    "description": "Soullink 鼠标视线追踪",
+    "type": "bool",
+    "hint": "开启后角色整个身体朝向跟随鼠标位置（FaceAngleX/Y 同时驱动头和身体）。坐标从 VTS 的 MousePositionX/Y 参数轮询",
+    "default": false
+  },
   "bilibili_enabled": {
     "description": "启用 B站直播功能",
     "type": "bool",
@@ -861,13 +867,13 @@
   "mouth_sync_gain": {
     "description": "嘴型音量增益",
     "type": "float",
-    "hint": "越大嘴张得越明显。建议 1.2~2.5",
+    "hint": "越大嘴张得越明显。照搬 Wallie 默认 4.0",
     "slider": {
       "min": 0.1,
       "max": 5,
       "step": 0.1
     },
-    "default": 1.6
+    "default": 4.0
   },
   "mouth_sync_smoothing": {
     "description": "嘴型平滑",

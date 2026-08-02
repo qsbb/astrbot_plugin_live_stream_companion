@@ -178,6 +178,8 @@ class SoullinkMixin:
             self._accept_soullink_frames = False
             if scheduler:
                 scheduler.clear_layer("soullink")
+        else:
+            self._ensure_soullink_gaze()
         return started
 
     async def _stop_soullink_runtime(self) -> None:
@@ -188,11 +190,130 @@ class SoullinkMixin:
             await runtime.stop()
         if scheduler:
             scheduler.clear_layer("soullink")
+        self._stop_soullink_gaze()
+
+    def _stop_soullink_gaze(self) -> None:
+        """停掉鼠标视线追踪（gaze 循环 + VTS 轮询器）。"""
+        gaze_task = getattr(self, "_soullink_gaze_task", None)
+        if gaze_task:
+            gaze_task.cancel()
+            self._soullink_gaze_task = None
+        poll_task = getattr(self, "_soullink_gaze_poll_task", None)
+        if poll_task:
+            poll_task.cancel()
+            self._soullink_gaze_poll_task = None
+        scheduler = getattr(self, "_vts_parameter_scheduler", None)
+        if scheduler:
+            scheduler.clear_layer("soullink_gaze")
+
+    def _is_soullink_gaze_enabled(self) -> bool:
+        return bool(self.config.get("soullink_gaze_enabled", False))
+
+    async def _soullink_gaze_loop(self) -> None:
+        """消费 VTS 轮询到的鼠标坐标 → 平滑 → 推身体朝向 + 视线。
+
+        坐标由 _soullink_gaze_vts_poller 从 VTS 的 MousePositionX/Y
+        读取并归一化为 0~1（左上原点）。
+
+        模型映射：FaceAngleX/Y 同时驱动 ParamAngleX/Y（头）和
+        ParamBodyAngleX/Y（身体），所以推 FaceAngleX/Y 让整个身体
+        跟随鼠标朝向；EyeLeftX/Y 精调眼珠视线。后写覆盖 Soullink
+        默认视线（scheduler 合并顺序保证 soullink_gaze 赢）。
+        """
+        body_x = 0.0   # FaceAngleX（身体+头左右）
+        body_y = 0.0   # FaceAngleY（身体+头上下）
+        eye_x = 0.0
+        eye_y = 0.0
+        body_gain = 25.0  # 身体朝向角度（度）
+        eye_gain = 1.6    # 眼珠偏转增益
+
+        while True:
+            x = getattr(self, "_soullink_gaze_x", 0.5)
+            y = getattr(self, "_soullink_gaze_y", 0.5)
+            dx = x - 0.5
+            dy = y - 0.5
+            target_body_x = dx * body_gain
+            target_body_y = dy * body_gain
+            body_x += (target_body_x - body_x) * 0.25
+            body_y += (target_body_y - body_y) * 0.25
+            target_eye_x = dx * 2.0 * eye_gain
+            target_eye_y = -dy * 2.0 * eye_gain
+            eye_x += (target_eye_x - eye_x) * 0.35
+            eye_y += (target_eye_y - eye_y) * 0.35
+            scheduler = getattr(self, "_vts_parameter_scheduler", None)
+            if scheduler:
+                scheduler.set_layer(
+                    "soullink_gaze",
+                    [
+                        {"id": "FaceAngleX", "value": round(body_x, 2)},
+                        {"id": "FaceAngleY", "value": round(body_y, 2)},
+                        # 眼睛映射：EyeRightX -> ParamEyeBallX（反向），
+                        # 鼠标朝右(dx>0)应推负值让眼睛朝右，与身体方向一致
+                        {"id": "EyeRightX", "value": round(-eye_x, 3)},
+                        {"id": "EyeRightY", "value": round(eye_y, 3)},
+                    ],
+                    ttl=0.5,
+                )
+            await asyncio.sleep(0.05)  # 20 Hz
+
+    def _set_soullink_gaze(self, x: float, y: float) -> None:
+        """更新鼠标坐标（由 VTS 轮询器或测试按钮调用）。"""
+        try:
+            self._soullink_gaze_x = max(0.0, min(1.0, float(x)))
+            self._soullink_gaze_y = max(0.0, min(1.0, float(y)))
+        except (TypeError, ValueError):
+            pass
+
+    async def _soullink_gaze_vts_poller(self) -> None:
+        """轮询 VTS 鼠标位置参数。
+
+        VTS 桌面版系统级采集鼠标（用于点击/物品交互），MousePositionX/Y
+        始终有值，范围 -1~1：X 轴 -1=屏幕左缘 +1=右缘；Y 轴与屏幕坐标
+        相反（+1=屏幕顶），换算到 0~1（左上原点）时取反。
+        走 self.vts 请求-响应通道（_parameter_vts 的响应被排水任务消费，
+        不能在其上做请求-响应）。
+        """
+        interval = 0.066  # ~15 Hz：每周期两次串行请求，别挤占命令通道
+        retry_delay = 3.0
+
+        while True:
+            try:
+                data_x = await self.vts.get_parameter_value("MousePositionX")
+                data_y = await self.vts.get_parameter_value("MousePositionY")
+                mx = float(data_x.get("value", 0.0))
+                my = float(data_y.get("value", 0.0))
+                self._set_soullink_gaze((mx + 1.0) / 2.0, (1.0 - my) / 2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(f"[Soullink] VTS 鼠标参数轮询失败: {exc}")
+                await asyncio.sleep(retry_delay)
+                continue
+            await asyncio.sleep(interval)
+
+    def _ensure_soullink_gaze(self) -> None:
+        """启动/停止鼠标追踪（跟随 Soullink 生命周期）。"""
+        gaze_task = getattr(self, "_soullink_gaze_task", None)
+        should_run = self._is_soullink_enabled() and self._is_soullink_gaze_enabled()
+        if should_run and (gaze_task is None or gaze_task.done()):
+            self._soullink_gaze_x = 0.5
+            self._soullink_gaze_y = 0.5
+            self._soullink_gaze_task = asyncio.create_task(
+                self._soullink_gaze_loop(), name="soullink-gaze"
+            )
+            poll_task = getattr(self, "_soullink_gaze_poll_task", None)
+            if poll_task is None or poll_task.done():
+                self._soullink_gaze_poll_task = asyncio.create_task(
+                    self._soullink_gaze_vts_poller(), name="soullink-gaze-poll"
+                )
+        elif not should_run and gaze_task is not None and not gaze_task.done():
+            self._stop_soullink_gaze()
 
     async def _sync_soullink_runtime(self) -> bool:
         if not self._is_soullink_enabled():
             await self._stop_soullink_runtime()
             return False
+        self._ensure_soullink_gaze()
         runtime = getattr(self, "_soullink_runtime", None)
         configured_node = str(self.config.get("soullink_node_path") or "").strip()
         if runtime and runtime.running and configured_node != runtime.node_path:

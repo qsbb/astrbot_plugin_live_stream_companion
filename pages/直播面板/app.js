@@ -58,6 +58,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "soullinkMappingDiscardBtn", "soullinkMappingSaveBtn", "soullinkMappingCloseBtn",
     "soullinkCompositeFields", "soullinkMappingRules", "soullinkMappingJson",
     "soullinkMappingImportBtn", "soullinkMappingCopyBtn", "soullinkVtsInputOptions",
+    "gazeStatus", "gazeStage", "gazeDot", "gazeCoords", "gazeToggle",
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
@@ -77,6 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
   els.soullinkStopBtn?.addEventListener("click", () => controlSoullink("stop"));
   els.soullinkResetBtn?.addEventListener("click", () => controlSoullink("reset"));
   els.soullinkTriggerBtn?.addEventListener("click", () => triggerSoullink());
+  els.gazeToggle?.addEventListener("change", () => toggleGaze());
   els.soullinkParamsBtn?.addEventListener("click", () => loadSoullinkParameters());
   els.soullinkMappingBtn?.addEventListener("click", () => openSoullinkMapping());
   els.soullinkMappingCloseBtn?.addEventListener("click", () => closeSoullinkMapping());
@@ -646,12 +648,54 @@ async function loadSoullink(options = {}) {
   try {
     state.soullink = await LivePageApi.get("/soullink/status");
     renderSoullink();
+    loadGazeStatus();
     return state.soullink;
   } catch (error) {
     if (!options.silent) showToast(error.message || String(error));
     if (els.soullinkSummary) els.soullinkSummary.textContent = "Soullink 状态接口暂不可用。";
     return null;
   }
+}
+
+async function loadGazeStatus() {
+  try {
+    const st = await LivePageApi.get("/soullink/gaze/status");
+    if (els.gazeToggle) {
+      els.gazeToggle.checked = !!st.enabled;
+    }
+    if (els.gazeStatus) {
+      if (st.enabled && st.soullink_enabled) {
+        els.gazeStatus.textContent = st.running ? "运行中" : "已启用（未运行）";
+        els.gazeStatus.className = "gaze-status on";
+      } else {
+        els.gazeStatus.textContent = "未启用";
+        els.gazeStatus.className = "gaze-status off";
+      }
+    }
+    // 鼠标位置点
+    if (els.gazeStage && typeof st.x === "number") {
+      const pctX = (Math.max(0, Math.min(1, st.x)) * 100).toFixed(1);
+      const pctY = (Math.max(0, Math.min(1, st.y)) * 100).toFixed(1);
+      els.gazeDot.style.left = pctX + "%";
+      els.gazeDot.style.top = pctY + "%";
+      if (els.gazeCoords) {
+        els.gazeCoords.textContent = `${st.x.toFixed(2)} ${st.y.toFixed(2)}`;
+      }
+    }
+  } catch (error) {
+    if (els.gazeStatus) els.gazeStatus.textContent = "接口不可用";
+  }
+}
+
+async function toggleGaze() {
+  const enabled = !!els.gazeToggle?.checked;
+  try {
+    await LivePageApi.post("/config/save", { values: { soullink_gaze_enabled: enabled } });
+    showToast(enabled ? "鼠标视线追踪已开启。" : "鼠标视线追踪已关闭，停止轮询 VTS 鼠标参数。");
+  } catch (error) {
+    showToast(error.message || String(error));
+  }
+  await loadGazeStatus();
 }
 
 async function controlSoullink(action, extra = {}) {

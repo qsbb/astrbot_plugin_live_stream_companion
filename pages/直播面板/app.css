@@ -1211,6 +1211,103 @@ input[type="range"] {
   width: 100%;
 }
 
+.soullink-gaze-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.gaze-status-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.gaze-toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.gaze-toggle .gaze-toggle-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.gaze-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 96px;
+}
+
+.gaze-cross {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to right, transparent calc(50% - 0.5px), rgba(47, 117, 102, 0.25) calc(50% - 0.5px), rgba(47, 117, 102, 0.25) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(50% - 0.5px), rgba(47, 117, 102, 0.25) calc(50% - 0.5px), rgba(47, 117, 102, 0.25) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+  pointer-events: none;
+}
+
+.gaze-dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 8px rgba(47, 117, 102, 0.45);
+  transform: translate(-50%, -50%);
+  left: 50%;
+  top: 50%;
+  transition: left 0.08s linear, top 0.08s linear;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.gaze-coords {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-size: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--accent-strong);
+  background: rgba(255, 255, 255, 0.7);
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .soullink-gaze-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gaze-status {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.gaze-status.on {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+.gaze-status.off {
+  background: rgba(255, 152, 0, 0.15);
+  color: #ff9800;
+}
+
 .telemetry-panel,
 .parameter-panel {
   grid-column: 1 / -1;

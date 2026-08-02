@@ -207,6 +207,26 @@
 
           <section class="telemetry-panel">
             <div class="section-head compact-head">
+              <h2>视线</h2>
+              <div class="gaze-status-wrap">
+                <label class="field field-toggle gaze-toggle" for="gazeToggle">
+                  <span class="gaze-toggle-label">鼠标视线追踪</span>
+                  <input id="gazeToggle" class="config-control" type="checkbox" aria-label="鼠标视线追踪">
+                </label>
+                <label class="gaze-status" id="gazeStatus">未启用</label>
+              </div>
+            </div>
+            <div class="soullink-gaze-row">
+              <div class="gaze-stage" id="gazeStage" title="鼠标在屏幕上的位置（VTS 采集）">
+                <div class="gaze-cross" aria-hidden="true"></div>
+                <div class="gaze-dot" id="gazeDot"></div>
+                <div class="gaze-coords" id="gazeCoords">0.50 0.50</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="telemetry-panel">
+            <div class="section-head compact-head">
               <h2>VAD 与 FACS</h2>
               <span class="muted">实时更新</span>
             </div>

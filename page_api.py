@@ -40,6 +40,7 @@ class LiveStreamCompanionPageApi:
             ("/subtitle/preview", self.preview_subtitle, ["POST"], "Live Stream Companion subtitle preview"),
             ("/soullink/status", self.get_soullink_status, ["GET"], "Soullink Emotion status"),
             ("/soullink/control", self.soullink_control, ["POST"], "Soullink Emotion control"),
+            ("/soullink/gaze/status", self.get_soullink_gaze_status, ["GET"], "Soullink mouse gaze status"),
             ("/soullink/vts-parameters", self.get_soullink_vts_parameters, ["GET"], "Soullink VTS parameters"),
             ("/soullink/mapping", self.get_soullink_mapping, ["GET"], "Soullink advanced mapping"),
             ("/soullink/mapping/apply", self.apply_soullink_mapping, ["POST"], "Soullink mapping preview and save"),
@@ -215,6 +216,23 @@ class LiveStreamCompanionPageApi:
             )
         except Exception as exc:
             logger.warning(f"[Soullink] 拓展页控制失败: {exc}")
+            return self._error(str(exc))
+
+    async def get_soullink_gaze_status(self) -> dict[str, Any]:
+        """鼠标视线追踪状态。"""
+        try:
+            plugin = self.plugin
+            return self._ok(
+                {
+                    "enabled": plugin._is_soullink_gaze_enabled(),
+                    "soullink_enabled": plugin._is_soullink_enabled(),
+                    "running": getattr(plugin, "_soullink_gaze_task", None) is not None,
+                    "x": round(getattr(plugin, "_soullink_gaze_x", 0.5), 3),
+                    "y": round(getattr(plugin, "_soullink_gaze_y", 0.5), 3),
+                }
+            )
+        except Exception as exc:
+            logger.warning(f"[Soullink] 鼠标追踪状态读取失败: {exc}")
             return self._error(str(exc))
 
     async def get_soullink_vts_parameters(self) -> dict[str, Any]:
