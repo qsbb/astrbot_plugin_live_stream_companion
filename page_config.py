@@ -272,6 +272,7 @@ class PageConfigManager:
             "soullink_vad_decay_rate",
             "soullink_node_path",
             "soullink_vts_mapping",
+            "soullink_gaze_enabled",
         ]
 
     @staticmethod
@@ -424,6 +425,7 @@ class PageConfigManager:
                     "soullink_vad_decay_rate",
                     "soullink_node_path",
                     "soullink_vts_mapping",
+                    "soullink_gaze_enabled",
                     "mouth_sync_enabled",
                     "mouth_sync_open_parameter",
                     "mouth_sync_form_parameter",

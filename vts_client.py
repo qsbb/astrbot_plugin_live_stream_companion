@@ -333,6 +333,13 @@ class VTSClient:
                     parameters.append({**item, "kind": kind})
         return parameters
 
+    async def get_parameter_value(self, name: str) -> Dict[str, Any]:
+        """读取某个输入参数（默认或自定义）的当前值。"""
+        resp = await self._send_request(
+            "ParameterValueRequest", {"name": name}
+        )
+        return resp.get("data", {})
+
     async def get_live2d_parameters(self) -> List[Dict[str, Any]]:
         """获取当前模型的 Live2D 输出参数，用于校准输入映射。"""
         resp = await self._send_request("Live2DParameterListRequest", {})
