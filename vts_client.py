@@ -93,7 +93,7 @@ class VTSClient:
                     await self._authenticate_current_connection()
 
             payload = self._build_request(message_type, data)
-            
+
             try:
                 await self._ws.send(payload)
             except asyncio.CancelledError:
@@ -119,7 +119,7 @@ class VTSClient:
                     raise VTSConnectionError(
                         f"VTube Studio 重连后发送失败: {retry_error}"
                     ) from retry_error
-            
+
             try:
                 response_raw = await asyncio.wait_for(
                     self._ws.recv(), timeout=self.DEFAULT_TIMEOUT
@@ -138,7 +138,7 @@ class VTSClient:
             except Exception as e:
                 await self._force_disconnect()
                 raise VTSConnectionError(f"VTube Studio 接收响应失败: {e}") from e
-            
+
             # 安全解析 JSON
             try:
                 response = json.loads(response_raw)
@@ -159,9 +159,9 @@ class VTSClient:
         """建立 WebSocket 连接"""
         if websockets is None:
             raise VTSClientError("websockets 库未安装")
-        
+
         logger.info(f"正在连接 VTube Studio: {self.url}")
-        
+
         try:
             self._ws = await asyncio.wait_for(
                 websockets.connect(self.url),

@@ -221,16 +221,7 @@ class LiveStreamCompanionPageApi:
     async def get_soullink_gaze_status(self) -> dict[str, Any]:
         """鼠标视线追踪状态。"""
         try:
-            plugin = self.plugin
-            return self._ok(
-                {
-                    "enabled": plugin._is_soullink_gaze_enabled(),
-                    "soullink_enabled": plugin._is_soullink_enabled(),
-                    "running": getattr(plugin, "_soullink_gaze_task", None) is not None,
-                    "x": round(getattr(plugin, "_soullink_gaze_x", 0.5), 3),
-                    "y": round(getattr(plugin, "_soullink_gaze_y", 0.5), 3),
-                }
-            )
+            return self._ok(self.plugin._soullink_gaze_status())
         except Exception as exc:
             logger.warning(f"[Soullink] 鼠标追踪状态读取失败: {exc}")
             return self._error(str(exc))

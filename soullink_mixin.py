@@ -186,11 +186,11 @@ class SoullinkMixin:
         self._accept_soullink_frames = False
         scheduler = getattr(self, "_vts_parameter_scheduler", None)
         runtime = getattr(self, "_soullink_runtime", None)
+        self._stop_soullink_gaze()
         if runtime:
             await runtime.stop()
         if scheduler:
             scheduler.clear_layer("soullink")
-        self._stop_soullink_gaze()
 
     def _stop_soullink_gaze(self) -> None:
         """停掉鼠标视线追踪（gaze 循环 + VTS 轮询器）。"""
@@ -209,6 +209,36 @@ class SoullinkMixin:
     def _is_soullink_gaze_enabled(self) -> bool:
         return bool(self.config.get("soullink_gaze_enabled", False))
 
+    def _soullink_gaze_is_tracking(self, now: float | None = None) -> bool:
+        last_update = float(getattr(self, "_soullink_gaze_last_update_at", 0.0) or 0.0)
+        current = time.monotonic() if now is None else now
+        return last_update > 0.0 and current - last_update <= 1.0
+
+    def _soullink_gaze_status(self) -> dict[str, Any]:
+        runtime = getattr(self, "_soullink_runtime", None)
+        gaze_task = getattr(self, "_soullink_gaze_task", None)
+        poll_task = getattr(self, "_soullink_gaze_poll_task", None)
+        last_update = float(getattr(self, "_soullink_gaze_last_update_at", 0.0) or 0.0)
+        now = time.monotonic()
+        running = bool(
+            runtime
+            and getattr(runtime, "running", False)
+            and gaze_task is not None
+            and not gaze_task.done()
+            and poll_task is not None
+            and not poll_task.done()
+        )
+        return {
+            "enabled": self._is_soullink_gaze_enabled(),
+            "soullink_enabled": self._is_soullink_enabled(),
+            "running": running,
+            "tracking": running and self._soullink_gaze_is_tracking(now),
+            "x": round(float(getattr(self, "_soullink_gaze_x", 0.5)), 3),
+            "y": round(float(getattr(self, "_soullink_gaze_y", 0.5)), 3),
+            "last_error": str(getattr(self, "_soullink_gaze_last_error", "") or ""),
+            "last_update_age": round(now - last_update, 3) if last_update > 0.0 else None,
+        }
+
     async def _soullink_gaze_loop(self) -> None:
         """消费 VTS 轮询到的鼠标坐标 → 平滑 → 推身体朝向 + 视线。
 
@@ -217,7 +247,7 @@ class SoullinkMixin:
 
         模型映射：FaceAngleX/Y 同时驱动 ParamAngleX/Y（头）和
         ParamBodyAngleX/Y（身体），所以推 FaceAngleX/Y 让整个身体
-        跟随鼠标朝向；EyeLeftX/Y 精调眼珠视线。后写覆盖 Soullink
+        跟随鼠标朝向；左右眼参数精调眼珠视线。后写覆盖 Soullink
         默认视线（scheduler 合并顺序保证 soullink_gaze 赢）。
         """
         body_x = 0.0   # FaceAngleX（身体+头左右）
@@ -226,8 +256,17 @@ class SoullinkMixin:
         eye_y = 0.0
         body_gain = 25.0  # 身体朝向角度（度）
         eye_gain = 1.6    # 眼珠偏转增益
+        layer_active = False
 
         while True:
+            scheduler = getattr(self, "_vts_parameter_scheduler", None)
+            if not self._soullink_gaze_is_tracking():
+                if scheduler and layer_active:
+                    scheduler.clear_layer("soullink_gaze")
+                body_x = body_y = eye_x = eye_y = 0.0
+                layer_active = False
+                await asyncio.sleep(0.05)
+                continue
             x = getattr(self, "_soullink_gaze_x", 0.5)
             y = getattr(self, "_soullink_gaze_y", 0.5)
             dx = x - 0.5
@@ -240,20 +279,22 @@ class SoullinkMixin:
             target_eye_y = -dy * 2.0 * eye_gain
             eye_x += (target_eye_x - eye_x) * 0.35
             eye_y += (target_eye_y - eye_y) * 0.35
-            scheduler = getattr(self, "_vts_parameter_scheduler", None)
             if scheduler:
+                output_eye_x = max(-1.0, min(1.0, -eye_x))
+                output_eye_y = max(-1.0, min(1.0, eye_y))
                 scheduler.set_layer(
                     "soullink_gaze",
                     [
                         {"id": "FaceAngleX", "value": round(body_x, 2)},
                         {"id": "FaceAngleY", "value": round(body_y, 2)},
-                        # 眼睛映射：EyeRightX -> ParamEyeBallX（反向），
-                        # 鼠标朝右(dx>0)应推负值让眼睛朝右，与身体方向一致
-                        {"id": "EyeRightX", "value": round(-eye_x, 3)},
-                        {"id": "EyeRightY", "value": round(eye_y, 3)},
+                        {"id": "EyeLeftX", "value": round(output_eye_x, 3)},
+                        {"id": "EyeRightX", "value": round(output_eye_x, 3)},
+                        {"id": "EyeLeftY", "value": round(output_eye_y, 3)},
+                        {"id": "EyeRightY", "value": round(output_eye_y, 3)},
                     ],
-                    ttl=0.5,
+                    ttl=0.25,
                 )
+                layer_active = True
             await asyncio.sleep(0.05)  # 20 Hz
 
     def _set_soullink_gaze(self, x: float, y: float) -> None:
@@ -261,6 +302,8 @@ class SoullinkMixin:
         try:
             self._soullink_gaze_x = max(0.0, min(1.0, float(x)))
             self._soullink_gaze_y = max(0.0, min(1.0, float(y)))
+            self._soullink_gaze_last_update_at = time.monotonic()
+            self._soullink_gaze_last_error = ""
         except (TypeError, ValueError):
             pass
 
@@ -286,6 +329,7 @@ class SoullinkMixin:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._soullink_gaze_last_error = str(exc)
                 logger.debug(f"[Soullink] VTS 鼠标参数轮询失败: {exc}")
                 await asyncio.sleep(retry_delay)
                 continue
@@ -294,29 +338,34 @@ class SoullinkMixin:
     def _ensure_soullink_gaze(self) -> None:
         """启动/停止鼠标追踪（跟随 Soullink 生命周期）。"""
         gaze_task = getattr(self, "_soullink_gaze_task", None)
-        should_run = self._is_soullink_enabled() and self._is_soullink_gaze_enabled()
-        if should_run and (gaze_task is None or gaze_task.done()):
-            self._soullink_gaze_x = 0.5
-            self._soullink_gaze_y = 0.5
-            self._soullink_gaze_task = asyncio.create_task(
-                self._soullink_gaze_loop(), name="soullink-gaze"
-            )
-            poll_task = getattr(self, "_soullink_gaze_poll_task", None)
+        poll_task = getattr(self, "_soullink_gaze_poll_task", None)
+        runtime = getattr(self, "_soullink_runtime", None)
+        should_run = bool(
+            self._is_soullink_enabled()
+            and self._is_soullink_gaze_enabled()
+            and runtime
+            and getattr(runtime, "running", False)
+        )
+        if should_run:
+            if gaze_task is None or gaze_task.done():
+                self._soullink_gaze_task = asyncio.create_task(
+                    self._soullink_gaze_loop(), name="soullink-gaze"
+                )
             if poll_task is None or poll_task.done():
                 self._soullink_gaze_poll_task = asyncio.create_task(
                     self._soullink_gaze_vts_poller(), name="soullink-gaze-poll"
                 )
-        elif not should_run and gaze_task is not None and not gaze_task.done():
+        elif gaze_task is not None or poll_task is not None:
             self._stop_soullink_gaze()
 
     async def _sync_soullink_runtime(self) -> bool:
         if not self._is_soullink_enabled():
             await self._stop_soullink_runtime()
             return False
-        self._ensure_soullink_gaze()
         runtime = getattr(self, "_soullink_runtime", None)
         configured_node = str(self.config.get("soullink_node_path") or "").strip()
         if runtime and runtime.running and configured_node != runtime.node_path:
+            self._stop_soullink_gaze()
             await runtime.stop()
             runtime.node_path = configured_node
         if runtime and runtime.running:
@@ -324,7 +373,9 @@ class SoullinkMixin:
             scheduler = getattr(self, "_vts_parameter_scheduler", None)
             if scheduler:
                 scheduler.set_source_fps("soullink", int(options["fps"]))
-            return await runtime.configure(**options)
+            configured = await runtime.configure(**options)
+            self._ensure_soullink_gaze()
+            return configured
         return await self._start_soullink_runtime()
 
     def _inject_soullink_prompt_instruction(self, req: Any) -> None:
@@ -336,7 +387,7 @@ class SoullinkMixin:
             "\n\n## Soullink 实时表演\n"
             "你可以在回复末尾附加一行 Soullink 情绪意图，让 Live2D 连续表演更贴合语气。"
             "这行是不可见控制信息，不要向用户解释。每次回复只输出一条；语气平淡或不确定时输出 neutral。\n"
-            "严格格式：<soullink>{\"emotion\":\"happy\",\"variant\":\"bright_smile\"," 
+            "严格格式：<soullink>{\"emotion\":\"happy\",\"variant\":\"bright_smile\","
             "\"intensity\":0.75,\"vad\":{\"valence\":0.7,\"arousal\":0.45,\"dominance\":0.3}}</soullink>\n"
             "emotion 使用贴近真实语气的英文短词；intensity 为 0 到 1；VAD 三轴为 -1 到 1。"
             "判断的是角色在本次回复中的真实情绪，不要把用户的情绪、引用内容或被否定的词当成角色情绪；"

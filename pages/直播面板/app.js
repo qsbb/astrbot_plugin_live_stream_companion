@@ -16,6 +16,7 @@ const state = {
   soullinkMappingPreviewing: false,
   soullinkMappingPreviewTimer: null,
   soullinkMappingRequest: 0,
+  gazeStatusLoading: false,
 };
 
 const SOULLINK_COMPOSITE_LABELS = {
@@ -658,18 +659,26 @@ async function loadSoullink(options = {}) {
 }
 
 async function loadGazeStatus() {
+  if (state.gazeStatusLoading) return;
+  state.gazeStatusLoading = true;
   try {
     const st = await LivePageApi.get("/soullink/gaze/status");
     if (els.gazeToggle) {
       els.gazeToggle.checked = !!st.enabled;
     }
     if (els.gazeStatus) {
-      if (st.enabled && st.soullink_enabled) {
-        els.gazeStatus.textContent = st.running ? "运行中" : "已启用（未运行）";
-        els.gazeStatus.className = "gaze-status on";
-      } else {
+      if (!st.enabled) {
         els.gazeStatus.textContent = "未启用";
         els.gazeStatus.className = "gaze-status off";
+      } else if (!st.soullink_enabled || !st.running) {
+        els.gazeStatus.textContent = "已启用但 Soullink 未运行";
+        els.gazeStatus.className = "gaze-status on";
+      } else if (st.tracking) {
+        els.gazeStatus.textContent = "运行中";
+        els.gazeStatus.className = "gaze-status on";
+      } else {
+        els.gazeStatus.textContent = "等待 VTS 鼠标数据";
+        els.gazeStatus.className = "gaze-status on";
       }
     }
     // 鼠标位置点
@@ -684,6 +693,8 @@ async function loadGazeStatus() {
     }
   } catch (error) {
     if (els.gazeStatus) els.gazeStatus.textContent = "接口不可用";
+  } finally {
+    state.gazeStatusLoading = false;
   }
 }
 

@@ -310,6 +310,12 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
             on_frame=self._on_soullink_frame,
         )
         self._soullink_last_vts_parameters: list[dict[str, Any]] = []
+        self._soullink_gaze_task: Optional[asyncio.Task] = None
+        self._soullink_gaze_poll_task: Optional[asyncio.Task] = None
+        self._soullink_gaze_x = 0.5
+        self._soullink_gaze_y = 0.5
+        self._soullink_gaze_last_update_at = 0.0
+        self._soullink_gaze_last_error = ""
         self._connected = False
 
     def _register_page_api_if_available(self) -> None:
@@ -1997,6 +2003,46 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
             )
         logger.info(f"[B站直播] 已自动回应弹幕 -> {session_id}: {reply_text}")
 
+    def _build_bili_live_framework_prompt_parts(
+        self,
+        selected: list[LiveDanmakuEvent],
+        formatted: str,
+        *,
+        auxiliary_context: str = "",
+        living_context: str = "",
+    ) -> tuple[str, str]:
+        custom_system_prompt = str(
+            self.config.get("bili_live_auto_reply_system_prompt")
+            or "你是正在直播中的虚拟主播助手。请根据观众最近的弹幕自然回应，语气像实时聊天，不要逐条复读。"
+        ).strip()
+        instructions = [
+            custom_system_prompt,
+            "【B站直播间弹幕事件】",
+            "请像正在直播中收到弹幕一样回应直播间观众。",
+            self._bili_live_reply_identity_prompt_line(),
+            "身份边界：下面的用户名是 B站直播间观众昵称，不是当前私聊对象，也不等于私聊历史里的用户或群友；"
+            "不要把私聊记忆、旧对话人物、现实称呼代入当前弹幕。",
+            "要求：自然回应，不要逐条复读；优先回应具体问题或反馈；不要说自己看不到弹幕；"
+            "不要把每条弹幕都当成进场问候，除非当前弹幕本身就是问候且确实需要回应；"
+            "不要反复使用“欢迎/你好/来啦/好久不见”这类开场白；"
+            "如果弹幕只是“摸摸/贴贴/抱抱”这类互动，就按当前直播身份自然回应这个观众，"
+            "不要说第三个人在摸你，也不要提无关照片、日程或旧聊天。",
+            "只输出要发给直播间观众的话，不要描述发送状态、处理过程或自己的回应策略。",
+        ]
+        support_hint = self._build_bili_support_reply_hint(selected).strip()
+        if support_hint:
+            instructions.append(support_hint)
+        if auxiliary_context:
+            instructions.append(auxiliary_context)
+        if living_context:
+            instructions.append(living_context)
+        if self.config.get("bili_live_auto_reply_force_full_tts", True):
+            instructions.append(
+                "请只输出普通文本回复，不要调用工具，不要写 <record>、<voice>、"
+                "<语音>、<send_message_to_user> 这些标签；如果需要语音，系统 TTS 插件会自动处理。"
+            )
+        return formatted, "\n\n".join(part for part in instructions if part)
+
     async def _reply_to_bili_live_events_via_framework(
         self, events: list[LiveDanmakuEvent], session_id: str
     ) -> bool:
@@ -2034,42 +2080,16 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
             logger.warning(f"[B站直播] 读取自动回应会话对话失败: {e}")
             return False
 
-        # Instructions and background context go to the system prompt; the user prompt
-        # stays a clean danmaku transcript. AstrBot retrieves the knowledge base with
-        # req.prompt (astr_main_agent._apply_kb), so mixing static instructions into it
-        # hijacks the retrieval query: the wording of the instructions dominates the
-        # embedding and the search returns speech-style documents for every danmaku.
-        instructions = [
-            "【B站直播间弹幕事件】",
-            "请像正在直播中收到弹幕一样回应直播间观众。",
-            self._bili_live_reply_identity_prompt_line(),
-            "身份边界：下面的用户名是 B站直播间观众昵称，不是当前私聊对象，也不等于私聊历史里的用户或群友；"
-            "不要把私聊记忆、旧对话人物、现实称呼代入当前弹幕。",
-            "要求：自然回应，不要逐条复读；优先回应具体问题或反馈；不要说自己看不到弹幕；"
-            "不要把每条弹幕都当成进场问候，除非当前弹幕本身就是问候且确实需要回应；"
-            "不要反复使用“欢迎/你好/来啦/好久不见”这类开场白；"
-            "如果弹幕只是“摸摸/贴贴/抱抱”这类互动，就按当前直播身份自然回应这个观众，"
-            "不要说第三个人在摸你，也不要提无关照片、日程或旧聊天。",
-            "只输出要发给直播间观众的话，不要描述发送状态、处理过程或自己的回应策略。",
-        ]
-        support_hint = self._build_bili_support_reply_hint(selected)
-        if support_hint.strip():
-            instructions.append(support_hint.strip())
         auxiliary_context = await self._build_bili_live_auxiliary_context(selected)
-        if auxiliary_context:
-            instructions.append(auxiliary_context)
         living_context = await self._build_living_memory_live_context(session_id, selected)
-        if living_context:
-            instructions.append(living_context)
-        if self.config.get("bili_live_auto_reply_force_full_tts", True):
-            # Keep the tag list exhaustive instead of open-ended ("等标签"), otherwise the
-            # model generalises the ban to the invisible <soullink> emotion tag as well.
-            instructions.append(
-                "请只输出普通文本回复，不要调用工具，不要写 <record>、<voice>、"
-                "<语音>、<send_message_to_user> 这些标签；如果需要语音，系统 TTS 插件会自动处理。"
-            )
-        system_prompt = "\n\n".join(instructions)
-        prompt = formatted
+        # AstrBot uses req.prompt as the knowledge-base query, so keep it as pure
+        # danmaku and put stable instructions and auxiliary context in system_prompt.
+        prompt, system_prompt = self._build_bili_live_framework_prompt_parts(
+            selected,
+            formatted,
+            auxiliary_context=auxiliary_context,
+            living_context=living_context,
+        )
 
         try:
             synthetic_event = SyntheticBiliLiveWakeEvent(

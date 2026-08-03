@@ -141,6 +141,7 @@ const FALLBACK_CONFIG_GROUPS = [
       "soullink_vad_decay_rate",
       "soullink_node_path",
       "soullink_vts_mapping",
+      "soullink_gaze_enabled",
       "mouth_sync_enabled",
       "mouth_sync_open_parameter",
       "mouth_sync_form_parameter",
@@ -164,6 +165,7 @@ const FALLBACK_CONFIG_SCHEMA = {
   soullink_parameter_gain: { description: "Soullink 表情参数增益", type: "float", default: 1.7, slider: { min: 0.4, max: 5, step: 0.05 } },
   soullink_body_motion_gain: { description: "Soullink 头部与身体动作增益", type: "float", default: 1.6, slider: { min: 0, max: 4, step: 0.05 } },
   soullink_vad_decay_rate: { description: "Soullink 情绪衰减速度", type: "float", default: 0.075, slider: { min: 0, max: 0.2, step: 0.001 } },
+  soullink_gaze_enabled: { description: "Soullink 鼠标视线追踪", type: "bool", default: false },
   soullink_node_path: { description: "Node.js 路径（可选）", type: "string", default: "" },
   soullink_vts_mapping: { description: "Soullink 到 VTS 参数映射（高级）", type: "text", default: "{}", hint: "请在 Soullink 实时测试台的高级参数校准中编辑" },
 

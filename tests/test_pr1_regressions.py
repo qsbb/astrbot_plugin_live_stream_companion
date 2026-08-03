@@ -149,6 +149,34 @@ class LiveReplyRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(request.system_prompt, "base")
 
+    def test_native_live_reply_keeps_danmaku_prompt_clean(self):
+        plugin = self._plugin(
+            bili_live_auto_reply_system_prompt="自定义主播人格",
+            bili_live_auto_reply_force_full_tts=True,
+            soullink_enabled=True,
+            soullink_prompt_intent_enabled=True,
+        )
+        events = [LiveDanmakuEvent("danmaku", "Alice", "今天画什么？")]
+        formatted = plugin._format_bili_events(events)
+
+        prompt, system_prompt = plugin._build_bili_live_framework_prompt_parts(
+            events,
+            formatted,
+            auxiliary_context="辅助上下文",
+            living_context="长期记忆",
+        )
+        request = SimpleNamespace(system_prompt=system_prompt)
+        plugin._inject_soullink_prompt_instruction(request)
+
+        self.assertEqual(prompt, formatted)
+        self.assertNotIn("自定义主播人格", prompt)
+        self.assertNotIn("辅助上下文", prompt)
+        self.assertNotIn("Soullink 实时表演", prompt)
+        self.assertIn("自定义主播人格", request.system_prompt)
+        self.assertIn("辅助上下文", request.system_prompt)
+        self.assertIn("长期记忆", request.system_prompt)
+        self.assertIn("Soullink 实时表演", request.system_prompt)
+
 
 class ExternalCompanionAPITests(unittest.IsolatedAsyncioTestCase):
     def test_together_subtitle_is_allowed_while_bili_live_is_running(self):
@@ -532,6 +560,146 @@ class SoullinkIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(scheduler.merged_parameters(), [])
         self.assertEqual(scheduler.stale_layers_dropped, 1)
+
+    def test_soullink_gaze_input_is_clamped_and_timestamped(self):
+        plugin = self._plugin()
+        plugin._soullink_gaze_last_error = "old error"
+        before = time.monotonic()
+
+        plugin._set_soullink_gaze(2.0, -1.0)
+
+        self.assertEqual(plugin._soullink_gaze_x, 1.0)
+        self.assertEqual(plugin._soullink_gaze_y, 0.0)
+        self.assertGreaterEqual(plugin._soullink_gaze_last_update_at, before)
+        self.assertEqual(plugin._soullink_gaze_last_error, "")
+
+    async def test_soullink_gaze_drives_both_eyes_with_bounded_values(self):
+        class _Scheduler:
+            def __init__(self):
+                self.parameters = []
+                self.ttl = None
+
+            def set_layer(self, _source, parameters, *, ttl=None):
+                self.parameters = parameters
+                self.ttl = ttl
+
+            def clear_layer(self, _source):
+                self.parameters = []
+
+        plugin = self._plugin()
+        scheduler = _Scheduler()
+        plugin._vts_parameter_scheduler = scheduler
+        plugin._set_soullink_gaze(1.0, 0.0)
+        task = asyncio.create_task(plugin._soullink_gaze_loop())
+        await asyncio.sleep(0)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        values = {item["id"]: item["value"] for item in scheduler.parameters}
+        self.assertEqual(
+            set(values),
+            {"FaceAngleX", "FaceAngleY", "EyeLeftX", "EyeRightX", "EyeLeftY", "EyeRightY"},
+        )
+        self.assertEqual(values["EyeLeftX"], values["EyeRightX"])
+        self.assertEqual(values["EyeLeftY"], values["EyeRightY"])
+        self.assertTrue(all(-1.0 <= values[key] <= 1.0 for key in values if key.startswith("Eye")))
+        self.assertEqual(scheduler.ttl, 0.25)
+
+    async def test_soullink_gaze_releases_layer_when_input_is_stale(self):
+        class _Scheduler:
+            def __init__(self):
+                self.cleared = []
+
+            def set_layer(self, _source, _parameters, *, ttl=None):
+                return None
+
+            def clear_layer(self, source):
+                self.cleared.append(source)
+
+        plugin = self._plugin()
+        scheduler = _Scheduler()
+        plugin._vts_parameter_scheduler = scheduler
+        plugin._set_soullink_gaze(0.8, 0.2)
+        task = asyncio.create_task(plugin._soullink_gaze_loop())
+        await asyncio.sleep(0.06)
+        plugin._soullink_gaze_last_update_at = time.monotonic() - 2.0
+        await asyncio.sleep(0.06)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertIn("soullink_gaze", scheduler.cleared)
+
+    async def test_soullink_gaze_tasks_restart_independently(self):
+        async def wait_forever():
+            await asyncio.Event().wait()
+
+        plugin = self._plugin(soullink_enabled=True, soullink_gaze_enabled=True)
+        plugin._soullink_runtime = SimpleNamespace(running=True)
+        plugin._vts_parameter_scheduler = SimpleNamespace(clear_layer=lambda _source: None)
+        plugin._soullink_gaze_loop = wait_forever
+        plugin._soullink_gaze_vts_poller = wait_forever
+        gaze_task = asyncio.create_task(wait_forever())
+        completed_poll_task = asyncio.create_task(asyncio.sleep(0))
+        await completed_poll_task
+        plugin._soullink_gaze_task = gaze_task
+        plugin._soullink_gaze_poll_task = completed_poll_task
+
+        plugin._ensure_soullink_gaze()
+
+        self.assertIs(plugin._soullink_gaze_task, gaze_task)
+        self.assertIsNot(plugin._soullink_gaze_poll_task, completed_poll_task)
+        self.assertFalse(plugin._soullink_gaze_poll_task.done())
+        plugin._stop_soullink_gaze()
+        await asyncio.sleep(0)
+
+    def test_soullink_gaze_does_not_start_before_runtime(self):
+        plugin = self._plugin(soullink_enabled=True, soullink_gaze_enabled=True)
+        plugin._soullink_runtime = SimpleNamespace(running=False)
+
+        plugin._ensure_soullink_gaze()
+
+        self.assertIsNone(getattr(plugin, "_soullink_gaze_task", None))
+        self.assertIsNone(getattr(plugin, "_soullink_gaze_poll_task", None))
+
+    async def test_soullink_gaze_status_reports_tracking_and_errors(self):
+        async def wait_forever():
+            await asyncio.Event().wait()
+
+        plugin = self._plugin(soullink_enabled=True, soullink_gaze_enabled=True)
+        plugin._soullink_runtime = SimpleNamespace(running=True)
+        plugin._soullink_gaze_task = asyncio.create_task(wait_forever())
+        plugin._soullink_gaze_poll_task = asyncio.create_task(wait_forever())
+        plugin._soullink_gaze_last_update_at = time.monotonic()
+        plugin._soullink_gaze_last_error = ""
+
+        status = plugin._soullink_gaze_status()
+        self.assertTrue(status["running"])
+        self.assertTrue(status["tracking"])
+        self.assertIsNotNone(status["last_update_age"])
+
+        plugin._soullink_gaze_last_update_at = time.monotonic() - 2.0
+        plugin._soullink_gaze_last_error = "VTS offline"
+        status = plugin._soullink_gaze_status()
+        self.assertFalse(status["tracking"])
+        self.assertEqual(status["last_error"], "VTS offline")
+        plugin._stop_soullink_gaze()
+        await asyncio.sleep(0)
+
+    async def test_vts_parameter_value_request_uses_parameter_name(self):
+        client = VTSClient()
+        calls = []
+
+        async def send_request(message_type, data):
+            calls.append((message_type, data))
+            return {"data": {"name": data["name"], "value": 0.25}}
+
+        client._send_request = send_request
+        result = await client.get_parameter_value("MousePositionX")
+
+        self.assertEqual(calls, [("ParameterValueRequest", {"name": "MousePositionX"})])
+        self.assertEqual(result["value"], 0.25)
 
     async def test_vts_api_error_is_not_reported_as_success(self):
         class _FakeWebSocket:
