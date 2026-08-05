@@ -5,7 +5,9 @@
 以及 Live2D 标签清理方法，避免把字幕实现继续堆在 main.py 中。
 """
 
+import asyncio
 import re
+import uuid
 from typing import Any
 
 from astrbot.api import logger
@@ -77,19 +79,35 @@ class SubtitleMixin:
     async def _start_subtitle_server_if_enabled(self) -> None:
         if not self._is_subtitle_enabled():
             return
-        host = str(self.config.get("subtitle_host") or "127.0.0.1")
-        port = self._safe_parse_int(self.config.get("subtitle_port"), 18081)
-        self._subtitle_server = SubtitleServer(host, port, self._get_subtitle_style())
-        try:
-            await self._subtitle_server.start()
-        except Exception as e:
-            logger.error(f"[字幕] 启动字幕 overlay 失败: {e}")
-            self._subtitle_server = None
+        start_lock = getattr(self, "_subtitle_start_lock", None)
+        if start_lock is None:
+            start_lock = asyncio.Lock()
+            self._subtitle_start_lock = start_lock
+        async with start_lock:
+            if not self._is_subtitle_enabled() or self._subtitle_server:
+                return
+            host = str(self.config.get("subtitle_host") or "127.0.0.1")
+            port = self._safe_parse_int(self.config.get("subtitle_port"), 18081)
+            server = SubtitleServer(host, port, self._get_subtitle_style())
+            self._subtitle_server = server
+            try:
+                await server.start()
+            except Exception as e:
+                logger.error(f"[字幕] 启动字幕 overlay 失败: {e}")
+                if self._subtitle_server is server:
+                    self._subtitle_server = None
 
     async def _stop_subtitle_server(self) -> None:
-        if self._subtitle_server:
-            await self._subtitle_server.stop()
-            self._subtitle_server = None
+        start_lock = getattr(self, "_subtitle_start_lock", None)
+        if start_lock is None:
+            start_lock = asyncio.Lock()
+            self._subtitle_start_lock = start_lock
+        async with start_lock:
+            server = self._subtitle_server
+            if server:
+                await server.stop()
+                if self._subtitle_server is server:
+                    self._subtitle_server = None
 
     def _clean_subtitle_text(self, text: str) -> str:
         cleaned = text or ""
@@ -120,6 +138,24 @@ class SubtitleMixin:
         if cleaned:
             self._subtitle_server.style = self._get_subtitle_style()
             await self._subtitle_server.show(cleaned)
+
+    async def _push_tts_audio_to_overlay(self, audio_path: str) -> bool:
+        """把 TTS 音频交给字幕 overlay 页面播放。"""
+        if not self._is_subtitle_enabled():
+            return False
+        path = str(audio_path or "").strip()
+        if not path:
+            return False
+        if not self._subtitle_server:
+            await self._start_subtitle_server_if_enabled()
+        server = self._subtitle_server
+        if not server:
+            return False
+        try:
+            return await server.register_audio(uuid.uuid4().hex, path)
+        except Exception as e:
+            logger.warning(f"[字幕] 推送直播 TTS 音频到 overlay 失败: {e}")
+            return False
 
     def _extract_subtitle_text_from_result(self, result) -> str:
         chain = getattr(result, "chain", None)

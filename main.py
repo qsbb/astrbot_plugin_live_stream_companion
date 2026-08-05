@@ -212,7 +212,7 @@ class SyntheticBiliLiveWakeEvent(AstrMessageEvent):
     "astrbot_plugin_live_stream_companion",
     "menglimi",
     "B 站直播弹幕读取、自动回应、Live2D 表情动作、OBS 字幕和 TTS 嘴型联动",
-    "1.8.0",
+    "6.0.3",
     "https://github.com/menglimi/astrbot_plugin_live_stream_companion",
 )
 class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixin, Star):
@@ -2303,6 +2303,9 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
     def _bili_live_auto_reply_sync_tts_subtitle(self) -> bool:
         return bool(self.config.get("bili_live_auto_reply_sync_tts_subtitle", True))
 
+    def _bili_live_tts_web_playback_enabled(self) -> bool:
+        return bool(self.config.get("bili_live_tts_web_playback_enabled", False))
+
     async def _send_bili_live_synced_tts_reply(self, session_id: str, text: str) -> bool:
         payload = await self._build_bili_live_tts_payload(
             session_id,
@@ -2426,6 +2429,10 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         )
         if schedule_local_playback:
             self._schedule_bili_live_tts_local_playback(record_audio_path)
+        if self._bili_live_tts_web_playback_enabled():
+            self._create_mouth_sync_task(
+                self._push_tts_audio_to_overlay(record_audio_path)
+            )
         asyncio.create_task(
             self._after_bili_live_tts_audio_generated(
                 record_audio_path,
@@ -6214,6 +6221,5 @@ $player.Close()
             return f"❌ 连接已断开：{e}"
         except Exception as e:
             return f"❌ 获取模型信息失败：{e}"
-
 
 

@@ -4,7 +4,7 @@
 
 - 插件名：`astrbot_plugin_live_stream_companion`
 - 中文名：`我会直播圈米养你`
-- 当前版本：`1.8.0`
+- 当前版本：`6.0.3`
 - 适配平台：`aiocqhttp` / OneBot v11
 - AstrBot 版本：`>=4.16,<5`
 - 编码要求：UTF-8
@@ -203,6 +203,20 @@ http://127.0.0.1:18081/
 ```text
 subtitle_scope = all
 ```
+
+### 5.1 AstrBot 和 OBS 不在同一台机器：让 TTS 从浏览器源出声
+
+`bili_live_tts_local_playback_enabled` 只在 AstrBot 所在机器播放音频。如果 AstrBot 跑在服务器、OBS 在直播机，改用网页播放：TTS 音频会推送到字幕 overlay 页面，由 OBS 浏览器源播放。
+
+配置里开启：
+
+```text
+subtitle_enabled = true
+subtitle_host = 0.0.0.0
+bili_live_tts_web_playback_enabled = true
+```
+
+OBS 浏览器源使用服务器地址，例如 `http://<服务器局域网IP>:18081/`。字幕和语音共用同一个页面及端口；本机播放和网页播放可以同时开启，也可以只开启网页播放。
 
 ### 6. 接上 TTS 嘴型
 
@@ -423,6 +437,7 @@ bilibili_ROOM_OWNER_AUTH_CODE
 | `bili_live_auto_reply_max_per_minute` | `6` | 每分钟最多自动回应 |
 | `bili_live_auto_reply_sync_tts_subtitle` | `true` | 开启后直播自动回应等待 TTS，并与打字机字幕同步 |
 | `bili_live_tts_local_playback_enabled` | `true` | 直播 TTS 生成后由本插件直接本机播放 |
+| `bili_live_tts_web_playback_enabled` | `false` | 直播 TTS 推送到字幕 overlay 页面，由 OBS 浏览器源播放；跨机器部署时使用 |
 
 ### OBS 和字幕
 
@@ -430,6 +445,7 @@ bilibili_ROOM_OWNER_AUTH_CODE
 |---|---:|---|
 | `subtitle_enabled` | `false` | 启用透明字幕层 |
 | `subtitle_scope` | `bili_live` | `bili_live` 只显示直播自动回应，`all` 显示所有 Bot 回复 |
+| `subtitle_host` | `127.0.0.1` | 同机部署用 `127.0.0.1`；跨机器时改为 `0.0.0.0` 或服务器局域网 IP |
 | `subtitle_port` | `18081` | 字幕网页端口 |
 | `obs_control_enabled` | `false` | 启用 OBS 控制 |
 | `obs_allow_stream_start` | `false` | 是否允许插件调用 OBS 推流 |

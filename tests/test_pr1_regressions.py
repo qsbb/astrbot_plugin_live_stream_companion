@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import json
+import os
+import tempfile
 import time
 import unittest
 from collections import deque
@@ -11,6 +13,7 @@ from data.plugins.astrbot_plugin_live_stream_companion.bilibili_live import (
 )
 from data.plugins.astrbot_plugin_live_stream_companion.main import VTubeStudioPlugin
 from data.plugins.astrbot_plugin_live_stream_companion.main import LiveStreamCompanionExtensionAPI
+from data.plugins.astrbot_plugin_live_stream_companion.subtitle_server import SubtitleServer
 from data.plugins.astrbot_plugin_live_stream_companion.vts_parameter_scheduler import (
     VTSParameterScheduler,
 )
@@ -214,6 +217,32 @@ class ExternalCompanionAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(blocker.cancelling())
         with self.assertRaises(asyncio.CancelledError):
             await blocker
+
+
+class SubtitleServerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_audio_registration_requires_running_server_and_real_file(self):
+        server = SubtitleServer("127.0.0.1", 0, {})
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as audio:
+            audio.write(b"RIFF-test")
+            audio_path = audio.name
+        try:
+            self.assertFalse(await server.register_audio("before-start", audio_path))
+            await server.start()
+            sent = []
+
+            async def broadcast(payload):
+                sent.append(payload)
+
+            server._broadcast = broadcast
+            self.assertTrue(await server.register_audio("audio-token", audio_path))
+            self.assertEqual(sent, [{"type": "audio", "token": "audio-token"}])
+            self.assertEqual(server._audio_files["audio-token"], os.path.abspath(audio_path))
+            self.assertFalse(await server.register_audio("directory", os.path.dirname(audio_path)))
+            self.assertIn("/audio/", server._render_html())
+            self.assertIn("ttsAudio.play", server._render_html())
+        finally:
+            await server.stop()
+            os.unlink(audio_path)
 
 
 class SoullinkIntegrationTests(unittest.IsolatedAsyncioTestCase):
