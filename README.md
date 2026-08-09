@@ -365,8 +365,8 @@ https://github.com/Zarosmm/obs-bilibili-stream/releases
 
 | 能力名 | 作用 |
 |---|---|
-| `live_stream_start` | 准备开播：选择分区、拟定标题，可启动监听、打开 OBS/L2DStudio，可按配置开始 OBS 推流 |
-| `live_stream_stop` | 结束直播：可停止 OBS 推流、停止弹幕监听，并触发下播小结 |
+| `live_stream_start` | 准备开播：选择 B站/Twitch、拟定标题，可启动对应平台监听、打开 OBS/L2DStudio，可按配置开始 OBS 推流 |
+| `live_stream_stop` | 结束直播：可停止 OBS 推流、停止所选平台监听，并触发下播小结 |
 
 这两个能力默认不启用。需要到：
 
@@ -374,7 +374,9 @@ https://github.com/Zarosmm/obs-bilibili-stream/releases
 陪伴面板 / 模块配置 / 外部主动能力
 ```
 
-手动启用并配置。
+手动启用并配置。平台支持 `auto`、`bili` 和 `twitch`；`auto` 会优先沿用正在监听的平台，空闲时优先使用已启用且已配置频道的 Twitch，否则使用 B站。本插件会提供文本、开关、数字和平台选项的类型元数据，支持该元数据的陪伴面板可渲染为对应控件。
+
+首次接入陪伴插件后，直播插件会持续检查这两个能力是否仍可用。陪伴插件重载导致注册丢失时会自动补注册，不需要再重载直播插件。
 
 安全规则：
 

@@ -763,10 +763,54 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         )
 
     async def _register_private_companion_proactive_abilities_with_retry(self) -> None:
+        registered = False
         for attempt in range(12):
             if self._register_private_companion_proactive_abilities():
-                return
+                registered = True
+                break
             await asyncio.sleep(5 if attempt else 1)
+
+        if not registered and self._private_companion_extension_api() is None:
+            logger.info("[B站直播] 未检测到可用的陪伴插件，停止外部主动能力注册自愈。")
+            return
+
+        delay = 60.0
+        while True:
+            try:
+                await asyncio.sleep(delay)
+                if self._private_companion_abilities_registered():
+                    delay = 60.0
+                    continue
+                if self._register_private_companion_proactive_abilities():
+                    logger.info("[B站直播] 外部主动能力已自愈补注册。")
+                    delay = 60.0
+                else:
+                    delay = min(delay * 2.0, 600.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(f"[B站直播] 外部主动能力自愈检查失败: {e}")
+                delay = min(delay * 2.0, 600.0)
+
+    def _private_companion_abilities_registered(self) -> bool:
+        """Return whether both live abilities still have bound executors."""
+        api = self._private_companion_extension_api()
+        list_abilities = getattr(api, "list_proactive_abilities", None)
+        if not callable(list_abilities):
+            return False
+        try:
+            abilities = list_abilities()
+        except Exception as e:
+            logger.debug(f"[B站直播] 读取已注册外部主动能力失败: {e}")
+            return False
+        if not isinstance(abilities, list):
+            return False
+        available = {
+            str(item.get("name") or "")
+            for item in abilities
+            if isinstance(item, dict) and bool(item.get("available"))
+        }
+        return {"live_stream_start", "live_stream_stop"}.issubset(available)
 
     def _private_companion_extension_api(self) -> Any | None:
         try:
@@ -797,6 +841,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 "min_interval_hours": 24,
                 "default_enabled": False,
                 "default_config": {
+                    "platform": "auto",
                     "area_query": "",
                     "title_template": "",
                     "start_listener": True,
@@ -807,37 +852,55 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                     "wait_seconds": 5,
                 },
                 "config_schema": {
+                    "platform": {
+                        "label": "直播平台",
+                        "description": "自动模式优先沿用正在监听的平台，否则使用已配置的 Twitch，最后回退 B站",
+                        "type": "select",
+                        "options": [
+                            {"value": "auto", "label": "自动选择"},
+                            {"value": "twitch", "label": "Twitch"},
+                            {"value": "bili", "label": "B站"},
+                        ],
+                    },
                     "area_query": {
                         "label": "默认分区",
                         "description": "可填子分区名、拼音或 area_id；留空使用直播插件当前 area_id",
+                        "type": "text",
                     },
                     "title_template": {
                         "label": "标题模板",
                         "description": "支持 {area_name}、{part_name}、{bot_name}、{display_name}、{reason}、{plan}",
+                        "type": "text",
                     },
                     "start_listener": {
                         "label": "启动弹幕监听",
-                        "description": "执行时调用直播插件的 B 站弹幕监听",
+                        "description": "按直播平台启动对应的弹幕监听",
+                        "type": "bool",
                     },
                     "start_apps": {
                         "label": "启动 OBS/L2DStudio",
                         "description": "执行前尝试打开已配置的 OBS 和 L2DStudio",
+                        "type": "bool",
                     },
                     "start_obs_stream": {
                         "label": "启动 OBS 推流",
                         "description": "危险动作；还需要直播插件 obs_allow_stream_start 为 true",
+                        "type": "bool",
                     },
                     "update_area_config": {
                         "label": "写回分区配置",
-                        "description": "用默认分区反查到 part_id/area_id 后写回直播插件配置",
+                        "description": "B站模式下用默认分区反查 part_id/area_id 并写回配置",
+                        "type": "bool",
                     },
                     "scene": {
                         "label": "OBS 场景",
                         "description": "留空使用直播插件默认直播场景",
+                        "type": "text",
                     },
                     "wait_seconds": {
                         "label": "启动等待秒数",
                         "description": "打开程序后等待 OBS WebSocket 就绪的时间",
+                        "type": "number",
                     },
                 },
                 "executor": self._execute_private_companion_start_live_ability,
@@ -856,17 +919,30 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 "min_interval_hours": 12,
                 "default_enabled": False,
                 "default_config": {
+                    "platform": "auto",
                     "stop_listener": True,
                     "stop_obs_stream": False,
                 },
                 "config_schema": {
+                    "platform": {
+                        "label": "直播平台",
+                        "description": "自动模式优先停止正在监听的平台",
+                        "type": "select",
+                        "options": [
+                            {"value": "auto", "label": "自动选择"},
+                            {"value": "twitch", "label": "Twitch"},
+                            {"value": "bili", "label": "B站"},
+                        ],
+                    },
                     "stop_listener": {
                         "label": "停止弹幕监听",
-                        "description": "执行时调用直播插件停止 B 站弹幕监听",
+                        "description": "按直播平台停止对应的弹幕监听",
+                        "type": "bool",
                     },
                     "stop_obs_stream": {
                         "label": "停止 OBS 推流",
                         "description": "危险动作；开启后会调用 OBS StopStream",
+                        "type": "bool",
                     },
                 },
                 "executor": self._execute_private_companion_stop_live_ability,
@@ -894,31 +970,43 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
     ) -> dict[str, Any]:
         ability_config = ctx.get("config") if isinstance(ctx.get("config"), dict) else {}
         messages: list[str] = []
-        area = await self._resolve_proactive_live_area(ability_config)
+        platform = self._resolve_proactive_live_platform(ability_config)
+        area = await self._resolve_proactive_live_area(
+            ability_config,
+            platform=platform,
+        )
         title = self._draft_proactive_live_title(ctx, ability_config, area)
 
         if self._config_bool(ability_config.get("start_listener"), True):
-            room_id = self._get_config_room_id()
-            if self._get_bili_live_type() == "web" and not room_id:
-                messages.append("未配置 B站直播房间号，已跳过弹幕监听")
+            if platform == "twitch":
+                messages.append(await self._start_twitch_live())
             else:
-                messages.append(await self._start_bili_live(room_id))
+                room_id = self._get_config_room_id()
+                if self._get_bili_live_type() == "web" and not room_id:
+                    messages.append("未配置 B站直播房间号，已跳过弹幕监听")
+                else:
+                    messages.append(await self._start_bili_live(room_id))
 
         if self._config_bool(ability_config.get("start_obs_stream"), False):
             messages.extend(await self._start_obs_stream_for_proactive(ability_config))
         elif self._config_bool(ability_config.get("start_apps"), True):
             messages.extend(await self._start_live_apps_for_proactive(ability_config))
 
-        area_text = area.display_text() if area else "未指定分区"
+        platform_text = "Twitch" if platform == "twitch" else "B站"
+        area_text = (
+            f"频道 {self._get_twitch_channel() or '未配置'}"
+            if platform == "twitch"
+            else area.display_text() if area else "未指定分区"
+        )
         context = (
-            f"直播准备：分区 {area_text}；拟定标题《{title}》。"
+            f"直播准备：平台 {platform_text}；{area_text}；拟定标题《{title}》。"
             f"{'；'.join(item for item in messages if item)}"
         )
         return {
             "ok": True,
             "context": context,
-            "summary": f"准备直播：{title}",
-            "memory": f"准备了一场直播，分区是 {area_text}，标题草案是《{title}》。",
+            "summary": f"准备{platform_text}直播：{title}",
+            "memory": f"准备了一场{platform_text}直播，目标是 {area_text}，标题草案是《{title}》。",
             "status": context,
         }
 
@@ -927,24 +1015,58 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
     ) -> dict[str, Any]:
         ability_config = ctx.get("config") if isinstance(ctx.get("config"), dict) else {}
         messages: list[str] = []
+        platform = self._resolve_proactive_live_platform(
+            ability_config,
+            prefer_running=True,
+        )
         if self._config_bool(ability_config.get("stop_obs_stream"), False):
             messages.extend(await self._stop_obs_stream_for_proactive())
         if self._config_bool(ability_config.get("stop_listener"), True):
-            messages.append(await self._stop_bili_live())
+            if platform == "twitch":
+                messages.append(await self._stop_twitch_live())
+            else:
+                messages.append(await self._stop_bili_live())
         if not messages:
             messages.append("没有启用具体下播动作，只记录了下播意图")
-        context = "直播收束：" + "；".join(item for item in messages if item)
+        platform_text = "Twitch" if platform == "twitch" else "B站"
+        context = f"直播收束（{platform_text}）：" + "；".join(
+            item for item in messages if item
+        )
         return {
             "ok": True,
             "context": context,
             "summary": "结束直播",
-            "memory": "主动收束了一次直播，并把下播余韵整理进直播记忆。",
+            "memory": f"主动收束了一次{platform_text}直播，并把下播余韵整理进直播记忆。",
             "status": context,
         }
 
+    def _resolve_proactive_live_platform(
+        self,
+        ability_config: dict[str, Any],
+        prefer_running: bool = False,
+    ) -> str:
+        platform = str(ability_config.get("platform") or "auto").strip().lower()
+        if platform in {"bili", "bilibili", "b站"}:
+            return "bili"
+        if platform in {"twitch", "tw"}:
+            return "twitch"
+        if self._is_twitch_live_running():
+            return "twitch"
+        if self._is_bili_live_running():
+            return "bili"
+        if prefer_running:
+            return "bili"
+        if self._is_twitch_enabled() and self._get_twitch_channel():
+            return "twitch"
+        return "bili"
+
     async def _resolve_proactive_live_area(
-        self, ability_config: dict[str, Any]
+        self,
+        ability_config: dict[str, Any],
+        platform: str = "bili",
     ) -> Optional[BilibiliLiveArea]:
+        if platform == "twitch":
+            return None
         query = str(ability_config.get("area_query") or "").strip()
         if not query:
             query = str(self.config.get("area_id") or "").strip()
