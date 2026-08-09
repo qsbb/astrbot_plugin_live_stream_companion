@@ -1,17 +1,17 @@
 # 更改记录
 
-## 6.0.4
+## 1.8.1
 
 - 新增 Twitch 直播支持：使用匿名 IRC 监听 Twitch 频道弹幕（无需 OAuth token），自动回应可发送到绑定会话并推送到 OBS 打字机字幕。
 - 直播面板 WebUI 新增“Twitch 直播”配置分组，可在网页端直接配置频道、自动回应与字幕范围，保存后即时同步运行时。
 - Twitch 自动回应接入 TTS 语音：复用直播 TTS 生成与播放链路（网页播放/本机播放），生成失败自动回退纯文字；新增 `twitch_auto_reply_tts_enabled` 开关。
-- 打字机字幕触发范围新增 `twitch_live`：只推送 Twitch 直播自动回应、手动测试和拓展页预览；`bili_live` 与 `all` 行为保持不变。
+- 打字机字幕触发范围新增 `twitch_live` 和 `live`：前者仅 Twitch，后者同时包含 B站和 Twitch；未知值安全回退到 `bili_live`。
 - 新增 Twitch 配置项：`twitch_enabled`、`twitch_channel`、`twitch_auto_start`、`twitch_live_log_events`、`twitch_live_debug_log`、`twitch_auto_reply_*` 系列。
 - 新增命令：`/twitch_live_start [频道]`、`/twitch_live_stop`、`/twitch_live_bind_here`、`/twitch_live_status`、`/twitch_live_recent [条数]`。
 - Twitch 自动回应复用现有会话绑定（`/twitch_live_bind_here`，未绑定时回退 B站绑定），内置冷却、每分钟限流和读空气降噪。
 - 新增 Twitch 支持回归测试（IRC 解析、字幕范围判断、自动回应 worker 与读空气）。
-
-## 6.0.3
+- 优化连接重试为指数退避并限制警告频率；支持频道 URL、IRC 标签完整转义、`/me` 动作和服务端重连指令。
+- 修复冷却/限流导致待处理弹幕滞留、每批最大事件数未生效、发送失败仍消耗配额及 TTS 可见文字丢失问题。
 
 - 合并直播 TTS 网页播放能力：TTS 音频可推送到字幕 overlay，由 OBS 浏览器源播放，支持 AstrBot 与直播机分开部署。
 - 增加网页播放开关、跨机器字幕服务配置提示，并将播放任务纳入插件生命周期清理。

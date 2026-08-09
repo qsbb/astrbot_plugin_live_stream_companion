@@ -844,13 +844,13 @@
   "twitch_enabled": {
     "description": "启用 Twitch 直播功能",
     "type": "bool",
-    "hint": "Twitch 功能总开关。开启后可以监听 Twitch 频道弹幕（匿名 IRC，无需 token），并把自动回应推送到 OBS 打字机字幕。",
+    "hint": "开启 Twitch 匿名 IRC 只读监听。无需 Token；自动回应会发送到绑定的 AstrBot 会话、OBS 字幕和 TTS，不会代发到 Twitch 聊天室。",
     "default": false
   },
   "twitch_channel": {
-    "description": "Twitch 频道名",
+    "description": "Twitch 频道",
     "type": "string",
-    "hint": "要监听的 Twitch 频道名，例如 xingchina。不需要 # 前缀，会自动小写。",
+    "hint": "填写频道名或频道 URL，例如 xingchina 或 https://www.twitch.tv/xingchina。",
     "default": ""
   },
   "twitch_auto_start": {
@@ -858,6 +858,17 @@
     "type": "bool",
     "hint": "开启后插件启动时若已配置频道名，会自动开始 Twitch 弹幕监听。",
     "default": true
+  },
+  "twitch_live_cache_size": {
+    "description": "Twitch 弹幕缓存数量",
+    "type": "int",
+    "hint": "仅保留最近的弹幕用于状态和自动回应。修改后在下次插件加载时应用。",
+    "slider": {
+      "min": 20,
+      "max": 1000,
+      "step": 20
+    },
+    "default": 200
   },
   "twitch_live_log_events": {
     "description": "记录 Twitch 弹幕日志",
@@ -874,7 +885,7 @@
   "twitch_auto_reply_enabled": {
     "description": "启用 Twitch 弹幕自动回应",
     "type": "bool",
-    "hint": "开启后，捕获到 Twitch 弹幕会按冷却时间自动调用 LLM 生成回复，发送到绑定会话并推送 OBS 打字机字幕。",
+    "hint": "按冷却和读空气规则调用 LLM。回复发送到绑定会话和直播输出，不会发回 Twitch 聊天室。",
     "default": false
   },
   "twitch_auto_reply_session_id": {
@@ -957,8 +968,8 @@
   "twitch_auto_reply_system_prompt": {
     "description": "Twitch 自动回应系统提示词",
     "type": "text",
-    "hint": "控制 Bot 回应 Twitch 弹幕时的语气和角色",
-    "default": "你是正在直播中的虚拟主播助手。请根据观众最近的弹幕自然回应，语气像实时聊天，不要逐条复读。"
+    "hint": "控制 Bot 回应 Twitch 弹幕时的身份、语气和语言",
+    "default": "你是正在直播中的虚拟主播助手。请根据 Twitch 观众最近的弹幕自然回应，使用观众的主要语言，语气像实时聊天，不要逐条复读，也不要声称回复已发送到 Twitch 聊天室。"
   },
   "mouth_sync_enabled": {
     "description": "启用 TTS 语音嘴型联动",
@@ -1052,9 +1063,10 @@
   "subtitle_scope": {
     "description": "打字机字幕触发范围",
     "type": "string",
-    "hint": "bili_live 只推送 B站直播自动回应、直播 TTS、手动测试和预览；twitch_live 只推送 Twitch 直播自动回应、手动测试和预览；all 表示所有 Bot 最终回复都会推送到字幕。",
+    "hint": "bili_live 仅 B站直播；twitch_live 仅 Twitch 直播；live 同时包含两种直播来源；all 还包含所有普通 Bot 回复。手动测试和预览始终允许。",
     "options": [
       "all",
+      "live",
       "bili_live",
       "twitch_live"
     ],
