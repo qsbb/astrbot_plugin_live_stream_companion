@@ -60,10 +60,11 @@ class PageConfigManager:
     async def apply_updates(self, updates: dict[str, Any]) -> bool:
         subtitle_before = self.subtitle_snapshot()
         stage_before = self.stage_snapshot()
+        twitch_before = self.twitch_snapshot()
         for key, value in updates.items():
             self.plugin.config[key] = value
         persisted = await self.persist()
-        await self.sync_runtime_after_change(subtitle_before, stage_before)
+        await self.sync_runtime_after_change(subtitle_before, stage_before, twitch_before)
         return persisted
 
     def read_schema(self) -> dict[str, Any]:
@@ -127,10 +128,18 @@ class PageConfigManager:
             if key.startswith("soullink_") or key in {"mouth_sync_fps", "mouth_sync_mode"}
         }
 
+    def twitch_snapshot(self) -> dict[str, Any]:
+        return {
+            key: self.plugin.config.get(key)
+            for key in self.editable_keys()
+            if key.startswith("twitch_")
+        }
+
     async def sync_runtime_after_change(
         self,
         subtitle_before: dict[str, Any],
         stage_before: dict[str, Any],
+        twitch_before: dict[str, Any] | None = None,
     ) -> None:
         subtitle_after = self.subtitle_snapshot()
         if subtitle_before != subtitle_after:
@@ -153,6 +162,14 @@ class PageConfigManager:
         if stage_before != self.stage_snapshot():
             await self.plugin._sync_soullink_runtime()
 
+        if twitch_before is not None and twitch_before != self.twitch_snapshot():
+            sync = getattr(self.plugin, "_sync_twitch_runtime", None)
+            if callable(sync):
+                try:
+                    await sync()
+                except Exception as exc:
+                    self.logger.warning(f"[Twitch] 运行时同步失败: {exc}")
+
     @staticmethod
     def editable_keys() -> list[str]:
         return [
@@ -170,6 +187,22 @@ class PageConfigManager:
             "bili_live_cache_size",
             "bili_live_log_events",
             "bili_live_debug_log",
+            "twitch_enabled",
+            "twitch_channel",
+            "twitch_auto_start",
+            "twitch_live_log_events",
+            "twitch_live_debug_log",
+            "twitch_auto_reply_enabled",
+            "twitch_auto_reply_session_id",
+            "twitch_auto_reply_cooldown_seconds",
+            "twitch_auto_reply_max_per_minute",
+            "twitch_auto_reply_min_events",
+            "twitch_auto_reply_max_events",
+            "twitch_auto_reply_air_guard_enabled",
+            "twitch_auto_reply_tts_enabled",
+            "twitch_auto_reply_air_guard_threshold",
+            "twitch_auto_reply_max_length",
+            "twitch_auto_reply_system_prompt",
             "obs_control_enabled",
             "obs_exe_path",
             "l2dstudio_exe_path",
@@ -298,6 +331,29 @@ class PageConfigManager:
                     "bili_live_cache_size",
                     "bili_live_log_events",
                     "bili_live_debug_log",
+                ],
+            },
+            {
+                "id": "twitch",
+                "title": "Twitch 直播",
+                "description": "Twitch 频道监听、弹幕自动回应和字幕来源。",
+                "keys": [
+                    "twitch_enabled",
+                    "twitch_channel",
+                    "twitch_auto_start",
+                    "twitch_live_log_events",
+                    "twitch_live_debug_log",
+                    "twitch_auto_reply_enabled",
+                    "twitch_auto_reply_session_id",
+                    "twitch_auto_reply_cooldown_seconds",
+                    "twitch_auto_reply_max_per_minute",
+                    "twitch_auto_reply_min_events",
+                    "twitch_auto_reply_max_events",
+                    "twitch_auto_reply_air_guard_enabled",
+                    "twitch_auto_reply_tts_enabled",
+                    "twitch_auto_reply_air_guard_threshold",
+                    "twitch_auto_reply_max_length",
+                    "twitch_auto_reply_system_prompt",
                 ],
             },
             {

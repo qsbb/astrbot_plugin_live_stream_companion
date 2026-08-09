@@ -841,6 +841,125 @@
     "hint": "控制 Bot 回应直播弹幕时的语气和角色",
     "default": "你是正在直播中的虚拟主播助手。请根据观众最近的弹幕自然回应，语气像实时聊天，不要逐条复读。"
   },
+  "twitch_enabled": {
+    "description": "启用 Twitch 直播功能",
+    "type": "bool",
+    "hint": "Twitch 功能总开关。开启后可以监听 Twitch 频道弹幕（匿名 IRC，无需 token），并把自动回应推送到 OBS 打字机字幕。",
+    "default": false
+  },
+  "twitch_channel": {
+    "description": "Twitch 频道名",
+    "type": "string",
+    "hint": "要监听的 Twitch 频道名，例如 xingchina。不需要 # 前缀，会自动小写。",
+    "default": ""
+  },
+  "twitch_auto_start": {
+    "description": "启动时自动监听",
+    "type": "bool",
+    "hint": "开启后插件启动时若已配置频道名，会自动开始 Twitch 弹幕监听。",
+    "default": true
+  },
+  "twitch_live_log_events": {
+    "description": "记录 Twitch 弹幕日志",
+    "type": "bool",
+    "hint": "开启后每次捕获到 Twitch 弹幕都会写入 AstrBot 日志。",
+    "default": true
+  },
+  "twitch_live_debug_log": {
+    "description": "Twitch IRC 协议调试日志",
+    "type": "bool",
+    "hint": "开启后会输出原始 IRC 行，用于排查连接和解析问题。",
+    "default": false
+  },
+  "twitch_auto_reply_enabled": {
+    "description": "启用 Twitch 弹幕自动回应",
+    "type": "bool",
+    "hint": "开启后，捕获到 Twitch 弹幕会按冷却时间自动调用 LLM 生成回复，发送到绑定会话并推送 OBS 打字机字幕。",
+    "default": false
+  },
+  "twitch_auto_reply_session_id": {
+    "description": "Twitch 自动回应会话ID",
+    "type": "string",
+    "hint": "可留空，然后在目标聊天发送 /twitch_live_bind_here 绑定当前会话；未绑定时复用 /bili_live_bind_here 的绑定。",
+    "default": ""
+  },
+  "twitch_auto_reply_cooldown_seconds": {
+    "description": "Twitch 自动回应冷却时间",
+    "type": "float",
+    "hint": "两次自动回应之间至少间隔多少秒，避免刷屏",
+    "slider": {
+      "min": 3,
+      "max": 120,
+      "step": 1
+    },
+    "default": 12.0
+  },
+  "twitch_auto_reply_max_per_minute": {
+    "description": "Twitch 每分钟最多自动回复",
+    "type": "int",
+    "hint": "限制每分钟最多发送多少条。设为 0 表示不限流",
+    "slider": {
+      "min": 0,
+      "max": 60,
+      "step": 1
+    },
+    "default": 6
+  },
+  "twitch_auto_reply_min_events": {
+    "description": "Twitch 触发回应最少弹幕数",
+    "type": "int",
+    "hint": "积累多少条弹幕后触发一次自动回应",
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    },
+    "default": 1
+  },
+  "twitch_auto_reply_max_events": {
+    "description": "Twitch 每次参考弹幕数",
+    "type": "int",
+    "hint": "每次自动回应最多参考最近多少条弹幕",
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    },
+    "default": 5
+  },
+  "twitch_auto_reply_air_guard_enabled": {
+    "description": "启用 Twitch 读空气降噪",
+    "type": "bool",
+    "hint": "开启后，纯寒暄、过短或重复弹幕通常静默；具体问题、多人连续话题会回应。",
+    "default": true
+  },
+  "twitch_auto_reply_air_guard_threshold": {
+    "description": "Twitch 读空气回应阈值",
+    "type": "float",
+    "hint": "本地规则的开口阈值。数值越高越少回复，越低越积极回复。建议 1.5 到 3.0。",
+    "slider": {
+      "min": 0.5,
+      "max": 6,
+      "step": 0.1
+    },
+    "default": 2.0
+  },
+  "twitch_auto_reply_max_length": {
+    "description": "Twitch 自动回应最大长度",
+    "type": "int",
+    "slider": {
+      "min": 20,
+      "max": 200,
+      "step": 5
+    },
+    "default": 80
+  },
+  "twitch_auto_reply_system_prompt": {
+    "description": "Twitch 自动回应系统提示词",
+    "type": "text",
+    "hint": "控制 Bot 回应 Twitch 弹幕时的语气和角色",
+    "default": "你是正在直播中的虚拟主播助手。请根据观众最近的弹幕自然回应，语气像实时聊天，不要逐条复读。"
+  },
   "mouth_sync_enabled": {
     "description": "启用 TTS 语音嘴型联动",
     "type": "bool",
@@ -933,10 +1052,11 @@
   "subtitle_scope": {
     "description": "打字机字幕触发范围",
     "type": "string",
-    "hint": "bili_live 表示只推送 B站直播自动回应、直播 TTS、手动测试和预览；all 表示所有 Bot 最终回复都会推送到字幕。",
+    "hint": "bili_live 只推送 B站直播自动回应、直播 TTS、手动测试和预览；twitch_live 只推送 Twitch 直播自动回应、手动测试和预览；all 表示所有 Bot 最终回复都会推送到字幕。",
     "options": [
       "all",
-      "bili_live"
+      "bili_live",
+      "twitch_live"
     ],
     "default": "bili_live"
   },
@@ -1110,5 +1230,11 @@
     "description": "在控制台输出详细的调试日志",
     "type": "bool",
     "default": false
+  },
+  "twitch_auto_reply_tts_enabled": {
+    "description": "Twitch 自动回应生成 TTS 语音",
+    "type": "bool",
+    "hint": "开启后，Twitch 弹幕自动回应会尝试生成 TTS 语音（网页播放/本机播放复用直播 TTS 开关），失败时自动回退纯文字。",
+    "default": true
   }
 }

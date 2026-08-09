@@ -34,6 +34,14 @@ help: |
   - /分区 <名称/拼音/area_id> 设置 B 站直播分区
   - 拓展页：插件详情页中打开“直播面板”，查看直播状态、记忆、观众画像和最近事件
 
+  Twitch 直播:
+  - /twitch_live_start <频道名> 启动 Twitch 弹幕监听
+  - /twitch_live_stop 停止 Twitch 弹幕监听
+  - /twitch_live_bind_here 将当前聊天绑定为 Twitch 自动回应输出会话
+  - /twitch_live_status 查看 Twitch 监听状态
+  - /twitch_live_recent [数量] 查看最近缓存的 Twitch 弹幕
+  - 直播面板 WebUI 的“Twitch 直播”分组可直接配置频道、自动回应和字幕范围
+
   字幕与嘴型:
   - /subtitle_status 查看字幕 overlay 状态
   - /subtitle_test [文本] 测试打字机字幕
@@ -41,7 +49,7 @@ help: |
   - /mouth_sync_test 2 测试嘴型联动
 
   初次使用建议先发送 /vts_auth 完成 VTube Studio 授权，再通过 /vts_status 和 /vts_list 检查模型热键。直播弹幕可使用 /bili_live_start <房间号> 临时启动；需要自动回应时，先发送 /bili_live_bind_here，再开启 bili_live_auto_reply_enabled。OBS 字幕默认地址为 http://127.0.0.1:18081/。如需 B 站开播推流，建议在 OBS 安装 obs-bilibili-stream。若安装“我会永远陪着你”，可在陪伴面板外部主动能力中启用主动开播/下播。
-version: 6.0.3
+version: 6.0.4
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.16,<5"

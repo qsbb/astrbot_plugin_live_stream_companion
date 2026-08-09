@@ -4,7 +4,7 @@
 
 - 插件名：`astrbot_plugin_live_stream_companion`
 - 中文名：`我会直播圈米养你`
-- 当前版本：`6.0.3`
+- 当前版本：`6.0.4`
 - 适配平台：`aiocqhttp` / OneBot v11
 - AstrBot 版本：`>=4.16,<5`
 - 编码要求：UTF-8
@@ -41,6 +41,7 @@ B 站直播间事件 -> AstrBot 记忆/人格/工具链 -> 回复文本/语音
 | VTube Studio | 自动发现、认证、列出热键/表情、触发热键、切换表情、移动模型、注入参数 |
 | 自主 Live2D | LLM 可输出 `<l2d:标签>`，插件截获后触发对应 VTS 热键 |
 | Soullink Emotion | 可选连续 VAD、FACS、Idle、视线、呼吸和动作混合；关闭或异常时保留原有热键链路 |
+| Twitch 弹幕监听 | 匿名 IRC 监听 Twitch 频道弹幕，自动回应可带 TTS 语音并推送到 OBS 打字机字幕 |
 | OBS 字幕 | 本地透明网页字幕层，支持打字机、淡出、描边、位置、最大长度 |
 | OBS 开播控制 | 拓展页可启动 OBS/L2DStudio、切场景、开虚拟摄像机、录制、推流 |
 | TTS 嘴型 | 等待本地 wav 语音生成后，按音量包络驱动 Live2D 嘴部参数 |
@@ -98,6 +99,29 @@ bilibili_room_id = 你的直播间房间号
 ```text
 /bili_live_start 123456
 ```
+
+### 2.1 在 Twitch 直播（可选）
+
+如果主要在 Twitch 直播，可以单独启用 Twitch 弹幕监听，无需 B 站：
+
+```text
+twitch_enabled = true
+twitch_channel = 你的频道名
+```
+
+启动监听：
+
+```text
+/twitch_live_start
+```
+
+在希望 Bot 输出直播回应的聊天里绑定会话：
+
+```text
+/twitch_live_bind_here
+```
+
+开启 `twitch_auto_reply_enabled` 后，Twitch 弹幕会触发 LLM 回复，发送到绑定会话并推送到 OBS 打字机字幕（字幕范围设为 `twitch_live`）。回复默认带 TTS 语音，生成失败自动回退纯文字。
 
 ### 3. 设置直播分区
 
@@ -197,6 +221,40 @@ http://127.0.0.1:18081/
 字幕会自动清理 `<l2d:...>`、TTS 控制块和常见 HTML/尖括号标签，避免控制指令出现在画面上。
 
 默认 `subtitle_scope=bili_live` 时，只有 B 站直播自动回应、直播 TTS 字幕、手动测试和拓展页预览会进入 OBS 打字机，普通 QQ 聊天不会显示在直播字幕层。
+
+在 Twitch 直播时，可以把触发范围改成 `twitch_live`，这样只有 Twitch 直播自动回应、手动测试和拓展页预览会进入 OBS 打字机，B站字幕和普通 QQ 聊天都不会串进来：
+
+```text
+subtitle_scope = twitch_live
+```
+
+### 4.1 Twitch 直播（弹幕监听 + 自动回应 + 打字机字幕）
+
+插件内置 Twitch 匿名 IRC 弹幕监听，无需申请 OAuth token：
+
+1. 在插件配置中开启 `twitch_enabled`，填写 `twitch_channel`（频道名，不需要 `#` 前缀），保持 `twitch_auto_start` 开启。
+2. 在目标聊天发送 `/twitch_live_bind_here` 绑定自动回应输出会话（也可以复用 `/bili_live_bind_here` 的绑定）。
+3. 开启 `twitch_auto_reply_enabled` 后，Twitch 弹幕会按冷却自动调用 LLM 生成回复，发送到绑定会话，并推送到 OBS 打字机字幕（字幕范围需为 `twitch_live` 或 `all`）。
+4. 可用命令：`/twitch_live_start [频道]`、`/twitch_live_stop`、`/twitch_live_status`、`/twitch_live_recent [条数]`。
+
+Twitch 自动回应带冷却、每分钟限流和读空气降噪（纯寒暄默认静默），相关参数见 `twitch_auto_reply_*` 配置项。
+
+Twitch 自动回应默认生成 **TTS 语音**：音频复用直播 TTS 的网页播放（`bili_live_tts_web_playback_enabled`，推送到字幕 overlay 由 OBS 浏览器源出声）和本机播放（`bili_live_tts_local_playback_enabled`）开关；语音生成失败会自动回退纯文字，不会卡住回复。不需要语音时可在 WebUI 关闭 `twitch_auto_reply_tts_enabled`。
+
+常见 Twitch 配置：
+
+| 配置 | 默认 | 说明 |
+|---|---:|---|
+| `twitch_enabled` | `false` | Twitch 功能总开关 |
+| `twitch_channel` | `` | 要监听的 Twitch 频道名，不需要 `#` 前缀 |
+| `twitch_auto_start` | `true` | 插件启动时自动开始监听 |
+| `twitch_auto_reply_enabled` | `false` | 开启 Twitch 弹幕自动回应 |
+| `twitch_auto_reply_tts_enabled` | `true` | 自动回应生成 TTS 语音，失败回退纯文字 |
+| `twitch_auto_reply_cooldown_seconds` | `12` | 两次自动回应最小间隔 |
+| `twitch_auto_reply_max_per_minute` | `6` | 每分钟最多自动回复，`0` 不限流 |
+| `twitch_auto_reply_air_guard_enabled` | `true` | 读空气降噪：纯寒暄/短弹幕默认静默 |
+| `twitch_auto_reply_max_length` | `80` | 自动回应最大长度 |
+| `twitch_auto_reply_system_prompt` | 见插件默认值 | 控制回应 Twitch 弹幕时的语气和角色 |
 
 如果你确实希望所有 Bot 回复都进入 OBS 打字机，可以把触发范围改成：
 
@@ -348,7 +406,7 @@ pages/直播面板/
 
 在 AstrBot WebUI 的插件详情页打开“直播面板”后，可以查看和操作：
 
-- B 站监听状态。
+- B 站监听状态与 Twitch 监听状态。
 - OBS 控制状态。
 - VTube Studio / 字幕 / 嘴型链路。
 - Soullink Emotion 实时测试台、VAD/FACS 状态和 VTS 参数目录。
@@ -393,6 +451,16 @@ pages/直播面板/
 /分区 <名称/拼音/area_id>
 ```
 
+### Twitch 直播
+
+```text
+/twitch_live_start [频道]
+/twitch_live_stop
+/twitch_live_status
+/twitch_live_recent [数量]
+/twitch_live_bind_here
+```
+
 ### 字幕与嘴型
 
 ```text
@@ -425,6 +493,21 @@ bilibili_APP_ID
 bilibili_ROOM_OWNER_AUTH_CODE
 ```
 
+### Twitch 直播
+
+| 配置 | 默认 | 说明 |
+|---|---:|---|
+| `twitch_enabled` | `false` | Twitch 功能总开关 |
+| `twitch_channel` | `""` | 要监听的 Twitch 频道名，不需要 `#` 前缀 |
+| `twitch_auto_start` | `true` | 插件启动时自动开始监听 |
+| `twitch_auto_reply_enabled` | `false` | Twitch 弹幕自动回应 |
+| `twitch_auto_reply_tts_enabled` | `true` | 自动回应生成 TTS 语音，失败回退纯文字 |
+| `twitch_auto_reply_cooldown_seconds` | `12` | 两次自动回应最小间隔 |
+| `twitch_auto_reply_max_per_minute` | `6` | 每分钟最多自动回复，`0` 不限流 |
+| `twitch_auto_reply_air_guard_enabled` | `true` | 读空气降噪：纯寒暄/短弹幕默认静默 |
+| `twitch_auto_reply_max_length` | `80` | 自动回应最大长度 |
+| `twitch_auto_reply_system_prompt` | 见插件默认值 | 控制回应 Twitch 弹幕时的语气和角色 |
+
 ### 弹幕注入和自动回应
 
 | 配置 | 默认 | 说明 |
@@ -444,7 +527,7 @@ bilibili_ROOM_OWNER_AUTH_CODE
 | 配置 | 默认 | 说明 |
 |---|---:|---|
 | `subtitle_enabled` | `false` | 启用透明字幕层 |
-| `subtitle_scope` | `bili_live` | `bili_live` 只显示直播自动回应，`all` 显示所有 Bot 回复 |
+| `subtitle_scope` | `bili_live` | `bili_live` 只显示 B站直播自动回应，`twitch_live` 只显示 Twitch 直播自动回应，`all` 显示所有 Bot 回复 |
 | `subtitle_host` | `127.0.0.1` | 同机部署用 `127.0.0.1`；跨机器时改为 `0.0.0.0` 或服务器局域网 IP |
 | `subtitle_port` | `18081` | 字幕网页端口 |
 | `obs_control_enabled` | `false` | 启用 OBS 控制 |
@@ -545,6 +628,22 @@ Soullink 需要 Node.js 18 或更高版本。插件内置固定版本的 `@soull
 - 自动回应是否被冷却或每分钟限流挡住。
 - 是否已经读到符合触发类型的直播事件。
 
+### Twitch 监听启动了但没有弹幕
+
+检查：
+
+- `twitch_enabled` 是否开启，`twitch_channel` 频道名是否正确（不需要 `#` 前缀）。
+- 发送 `/twitch_live_status` 查看监听状态和最近错误。
+- 日志里出现“连接被服务器关闭，准备重连”是 Twitch 踢匿名连接，5 秒后会自动重连，不影响使用。
+
+### Twitch 自动回应没有输出
+
+检查：
+
+- 是否发送过 `/twitch_live_bind_here`。
+- `twitch_auto_reply_enabled` 是否开启。
+- 是否被冷却、每分钟限流或读空气降噪静默（纯寒暄/短弹幕默认不回应，可关闭 `twitch_auto_reply_air_guard_enabled`，或发有具体内容的问题）。
+
 ### OBS 无法推流
 
 检查：
@@ -573,6 +672,7 @@ OBS WebSocket 可连接
 ```text
 main.py              插件主体、命令、直播上下文、陪伴插件联动
 bilibili_live.py     B 站 Web / Open Live 客户端、分区列表
+twitch_live.py       Twitch 匿名 IRC 弹幕客户端
 vts_client.py        VTube Studio API 客户端
 vts_discovery.py     VTS 自动发现
 subtitle_server.py   透明字幕网页服务

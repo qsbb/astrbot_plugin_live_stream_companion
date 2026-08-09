@@ -24,20 +24,29 @@ class SubtitleMixin:
 
     def _subtitle_scope(self) -> str:
         scope = str(self.config.get("subtitle_scope") or "bili_live").strip().lower()
-        return scope if scope in {"all", "bili_live"} else "all"
+        return scope if scope in {"all", "bili_live", "twitch_live"} else "all"
 
     def _event_should_push_subtitle(self, event: Any) -> bool:
-        if self._subtitle_scope() == "all":
+        scope = self._subtitle_scope()
+        if scope == "all":
             return True
+        if scope == "twitch_live":
+            return bool(event.get_extra("twitch_live_auto_reply"))
         return bool(event.get_extra("bili_live_auto_reply"))
 
     def _source_should_push_subtitle(self, source: str = "") -> bool:
-        if self._subtitle_scope() == "all":
+        scope = self._subtitle_scope()
+        if scope == "all":
             return True
         normalized = str(source or "").strip().lower()
         if normalized == "together_companion":
-            checker = getattr(self, "_is_bili_live_running", None)
+            if scope == "twitch_live":
+                checker = getattr(self, "_is_twitch_live_running", None)
+            else:
+                checker = getattr(self, "_is_bili_live_running", None)
             return bool(callable(checker) and checker())
+        if scope == "twitch_live":
+            return normalized in {"twitch_live", "manual", "preview"}
         return normalized in {"bili_live", "manual", "preview"}
 
     def _get_subtitle_style(self) -> dict[str, Any]:

@@ -62,6 +62,7 @@ from .mouth_sync_mixin import MouthSyncMixin
 from .soullink_mixin import SoullinkMixin
 from .soullink_runtime import SoullinkRuntimeBridge
 from .subtitle_mixin import SubtitleMixin
+from .twitch_live import TwitchIrcClient
 from .vts_parameter_scheduler import VTSParameterScheduler
 
 # 默认配置
@@ -69,6 +70,7 @@ DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 8001
 KV_KEY_TOKEN = "vts_auth_token"
 KV_KEY_BILI_REPLY_SESSION = "bili_live_reply_session"
+KV_KEY_TWITCH_REPLY_SESSION = "twitch_live_reply_session"
 _active_live_stream_companion: Any | None = None
 
 
@@ -277,6 +279,16 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         self._private_companion_proactive_register_task: Optional[asyncio.Task] = None
         self._subtitle_server = None
         self._warned_bili_blivedm_fallback = False
+        self._twitch_client: Optional[TwitchIrcClient] = None
+        self._twitch_live_task: Optional[asyncio.Task] = None
+        self._twitch_channel_name: str = ""
+        self._twitch_events: deque[LiveDanmakuEvent] = deque(maxlen=cache_size)
+        self._twitch_pending_reply_events: deque[LiveDanmakuEvent] = deque(maxlen=50)
+        self._twitch_auto_reply_task: Optional[asyncio.Task] = None
+        self._twitch_last_auto_reply_at = 0.0
+        self._twitch_auto_reply_minute_marks: deque[float] = deque(maxlen=120)
+        self._twitch_auto_reply_history: deque[dict[str, Any]] = deque(maxlen=30)
+        self._twitch_session_started_at = 0.0
         self.page_api = None
         self._register_page_api_if_available()
 
@@ -379,6 +391,13 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                     await self._start_bili_live(room_id)
                 else:
                     logger.warning("[B站直播] 已开启自动启动，但未配置房间号")
+
+            if self._is_twitch_enabled() and self.config.get("twitch_auto_start", True):
+                channel = self._get_twitch_channel()
+                if channel:
+                    await self._start_twitch_live(channel)
+                else:
+                    logger.warning("[Twitch] 已开启自动启动，但未配置频道名")
         except Exception as e:
             logger.error(f"[VTS] 初始化失败: {e}")
 
@@ -392,6 +411,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
             await self._cancel_task_set(self._bilibili_ai_memory_tasks)
             await self._cancel_task_attr("_bili_auto_reply_task")
             await self._cancel_task_attr("_bili_area_load_task")
+            await self._cancel_task_attr("_twitch_auto_reply_task")
             if self._private_companion_proactive_register_task:
                 task = self._private_companion_proactive_register_task
                 task.cancel()
@@ -402,6 +422,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 self._private_companion_proactive_register_task = None
             self._unregister_private_companion_proactive_abilities()
             await self._stop_bili_live()
+            await self._stop_twitch_live()
             await self._stop_subtitle_server()
             await self._stop_soullink_runtime()
             await self._vts_parameter_scheduler.stop()
@@ -2996,6 +3017,351 @@ $player.Close()
             return chain
         return [*chain, Plain(visible_text)]
 
+    # ------------------------------------------------------------------ #
+    #  Twitch 直播监听与自动回应
+    # ------------------------------------------------------------------ #
+
+    def _is_twitch_enabled(self) -> bool:
+        return bool(self.config.get("twitch_enabled", False))
+
+    def _get_twitch_channel(self) -> str:
+        return str(self.config.get("twitch_channel") or "").strip().lower().lstrip("#")
+
+    def _is_twitch_live_running(self) -> bool:
+        return bool(self._twitch_live_task and not self._twitch_live_task.done())
+
+    async def _start_twitch_live(self, channel: str = "") -> str:
+        if not self._is_twitch_enabled():
+            return "Twitch 直播功能未启用，请先在插件配置中开启 twitch_enabled。"
+        target = str(channel or "").strip().lower().lstrip("#")
+        if not target:
+            target = self._get_twitch_channel()
+        if not target:
+            return "未配置 Twitch 频道名。请填写 twitch_channel 或使用 /twitch_live_start <频道名>。"
+        if self._is_twitch_live_running():
+            return f"Twitch 直播弹幕监听已在运行（频道：{self._twitch_channel_name or target}）。"
+        client = TwitchIrcClient(
+            target,
+            self._on_twitch_live_event,
+            debug_log=bool(self.config.get("twitch_live_debug_log", False)),
+        )
+        self._twitch_client = client
+        self._twitch_channel_name = target
+        self._twitch_session_started_at = time.time()
+        task = await client.start()
+        self._twitch_live_task = task
+        logger.info(f"[Twitch] 已启动弹幕监听，频道：{target}")
+        return f"已启动 Twitch 直播弹幕监听（频道：{target}）"
+
+    async def _stop_twitch_live(self) -> str:
+        if self._twitch_client:
+            await self._twitch_client.stop()
+            self._twitch_client = None
+        if self._twitch_live_task:
+            if not self._twitch_live_task.done():
+                self._twitch_live_task.cancel()
+                try:
+                    await self._twitch_live_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._twitch_live_task = None
+        logger.info("[Twitch] 已停止弹幕监听")
+        return "已停止 Twitch 直播弹幕监听。"
+
+    async def _sync_twitch_runtime(self) -> None:
+        """WebUI 保存 Twitch 配置后，同步监听运行状态（page_config 调用）。"""
+        enabled = self._is_twitch_enabled()
+        channel = self._get_twitch_channel()
+        running = self._is_twitch_live_running()
+        if enabled and channel:
+            if not running:
+                await self._start_twitch_live(channel)
+            elif self._twitch_channel_name != channel:
+                await self._stop_twitch_live()
+                await self._start_twitch_live(channel)
+        elif running:
+            await self._stop_twitch_live()
+
+    async def _on_twitch_live_event(self, event: LiveDanmakuEvent) -> None:
+        self._twitch_events.append(event)
+        if self.config.get("twitch_live_log_events", True):
+            logger.info(f"[Twitch] 弹幕 {event.username}: {event.content}")
+        self._twitch_pending_reply_events.append(event)
+        self._schedule_twitch_auto_reply()
+
+    def _schedule_twitch_auto_reply(self) -> None:
+        if not self.config.get("twitch_auto_reply_enabled", False):
+            return
+        if self._twitch_auto_reply_task and not self._twitch_auto_reply_task.done():
+            return
+        self._twitch_auto_reply_task = asyncio.create_task(self._twitch_auto_reply_worker())
+
+    async def _twitch_auto_reply_worker(self) -> None:
+        events: list[LiveDanmakuEvent] = []
+        consumed = False
+        try:
+            cooldown = max(
+                1.0,
+                self._safe_parse_float(
+                    self.config.get("twitch_auto_reply_cooldown_seconds"), 12.0
+                ),
+            )
+            min_events = max(
+                1, self._safe_parse_int(self.config.get("twitch_auto_reply_min_events"), 1)
+            )
+            while self._twitch_pending_reply_events and len(events) < min_events:
+                elapsed = time.time() - self._twitch_last_auto_reply_at
+                if not events and elapsed < cooldown:
+                    break
+                events.append(self._twitch_pending_reply_events.popleft())
+            if len(events) >= min_events:
+                elapsed = time.time() - self._twitch_last_auto_reply_at
+                if elapsed >= cooldown:
+                    if self._twitch_auto_reply_rate_limited(events):
+                        logger.debug("[Twitch] 每分钟限流中，事件留在队列等待下次。")
+                    else:
+                        should_reply, reason = await self._should_reply_to_twitch_events(events)
+                        if should_reply:
+                            await self._reply_to_twitch_live_events(events)
+                            consumed = True
+                        else:
+                            logger.debug(f"[Twitch] 读空气静默：{reason}")
+                            consumed = True
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[Twitch] 自动回应 worker 异常: {e}")
+        finally:
+            self._twitch_auto_reply_task = None
+            if events and not consumed:
+                self._twitch_pending_reply_events.extendleft(reversed(events))
+            current_task = asyncio.current_task()
+            is_cancelling = bool(
+                current_task
+                and callable(getattr(current_task, "cancelling", None))
+                and current_task.cancelling()
+            )
+            if consumed and self._twitch_pending_reply_events and not is_cancelling:
+                asyncio.get_running_loop().call_soon(self._schedule_twitch_auto_reply)
+
+    def _twitch_auto_reply_rate_limited(self, events: list[LiveDanmakuEvent]) -> bool:
+        max_per_minute = self._safe_parse_int(
+            self.config.get("twitch_auto_reply_max_per_minute"), 6
+        )
+        if max_per_minute <= 0:
+            return False
+        now = time.time()
+        while (
+            self._twitch_auto_reply_minute_marks
+            and now - self._twitch_auto_reply_minute_marks[0] >= 60
+        ):
+            self._twitch_auto_reply_minute_marks.popleft()
+        return len(self._twitch_auto_reply_minute_marks) >= max_per_minute
+
+    def _record_twitch_auto_reply_rate_mark(self) -> None:
+        max_per_minute = self._safe_parse_int(
+            self.config.get("twitch_auto_reply_max_per_minute"), 6
+        )
+        if max_per_minute <= 0:
+            return
+        now = time.time()
+        while (
+            self._twitch_auto_reply_minute_marks
+            and now - self._twitch_auto_reply_minute_marks[0] >= 60
+        ):
+            self._twitch_auto_reply_minute_marks.popleft()
+        self._twitch_auto_reply_minute_marks.append(now)
+
+    def _record_twitch_auto_reply_sent(
+        self, events: list[LiveDanmakuEvent], reply_text: str
+    ) -> None:
+        self._twitch_last_auto_reply_at = time.time()
+        self._record_twitch_auto_reply_rate_mark()
+        self._twitch_auto_reply_history.append(
+            {
+                "ts": time.time(),
+                "events": [
+                    {"username": e.username, "content": e.content} for e in events
+                ],
+                "reply": reply_text,
+            }
+        )
+
+    async def _get_twitch_reply_session(self) -> str:
+        configured = str(
+            self.config.get("twitch_live_auto_reply_session_id") or ""
+        ).strip()
+        if configured:
+            return configured
+        bound = str(await self.get_kv_data(KV_KEY_TWITCH_REPLY_SESSION, "") or "").strip()
+        if bound:
+            return bound
+        return await self._get_bili_reply_session()
+
+    def _twitch_silent_markers(self) -> tuple[str, ...]:
+        return (
+            "你好", "在吗", "有人吗", "来了", "路过", "看看", "哈哈", "hh",
+            "666", "顶", "早上好", "中午好", "晚上好", "晚安", "早",
+            "贴贴", "围观", "吃瓜", "插眼", "沙发", "第一",
+        )
+
+    def _twitch_air_guard_local_decision(
+        self, events: list[LiveDanmakuEvent]
+    ) -> dict[str, Any]:
+        if not events:
+            return {"reply": False, "reason": "empty", "score": 0.0}
+        texts = [
+            str(e.content or "").strip()
+            for e in events
+            if e.event_type == "danmaku"
+        ]
+        if not texts:
+            return {"reply": False, "reason": "no_danmaku", "score": 0.0}
+        usernames = {str(e.username or "") for e in events}
+        compact = " ".join(texts)
+        score = 0.0
+        if len(compact) >= 10:
+            score += 1.5
+        if len(usernames) >= 2:
+            score += 1.0
+        if re.search(
+            r"[?？]|吗|怎么|什么|为什么|多少|如何|能不能|可以吗|求|帮", compact
+        ):
+            score += 3.0
+        silent_hits = sum(
+            1 for marker in self._twitch_silent_markers() if marker in compact
+        )
+        if silent_hits:
+            score -= 2.0 * silent_hits
+        if len(compact) < 3:
+            score -= 1.0
+        threshold = self._safe_parse_float(
+            self.config.get("twitch_auto_reply_air_guard_threshold"), 2.0
+        )
+        return {
+            "reply": score >= threshold,
+            "reason": f"score={score:.1f}",
+            "score": score,
+        }
+
+    async def _should_reply_to_twitch_events(
+        self, events: list[LiveDanmakuEvent]
+    ) -> tuple[bool, str]:
+        if not self.config.get("twitch_auto_reply_air_guard_enabled", True):
+            return True, "air_guard_disabled"
+        decision = self._twitch_air_guard_local_decision(events)
+        return bool(decision.get("reply")), str(decision.get("reason") or "unknown")
+
+    def _build_twitch_live_prompt(self, events: list[LiveDanmakuEvent]) -> str:
+        now = time.time()
+        lines: list[str] = []
+        for event in list(events)[-8:]:
+            age = max(0, int(now - event.ts))
+            lines.append(f"[{age}秒前] {event.username}: {event.content}")
+        header = "Twitch 直播间最近的弹幕："
+        if not lines:
+            return header + "\n（暂无弹幕）"
+        return (
+            header
+            + "\n"
+            + "\n".join(lines)
+            + "\n\n请以实时聊天的语气自然回应观众，不要逐条复读。"
+        )
+
+    async def _reply_to_twitch_live_events(self, events: list[LiveDanmakuEvent]) -> None:
+        session_id = await self._get_twitch_reply_session()
+        if not session_id:
+            logger.warning(
+                "[Twitch] 已收到弹幕，但未绑定自动回应会话。请在目标聊天发送 /twitch_live_bind_here（也可复用 /bili_live_bind_here 的绑定）。"
+            )
+            return
+        provider = None
+        try:
+            provider = self.context.get_using_provider(session_id)
+        except Exception:
+            try:
+                provider = self.context.get_using_provider()
+            except Exception:
+                provider = None
+        if not provider:
+            logger.warning("[Twitch] 自动回应弹幕失败：未找到可用 LLM Provider")
+            return
+        system_prompt = str(
+            self.config.get("twitch_auto_reply_system_prompt")
+            or "你是正在直播中的虚拟主播助手。请根据观众最近的弹幕自然回应，语气像实时聊天，不要逐条复读。"
+        )
+        prompt = self._build_twitch_live_prompt(events)
+        reply_text = ""
+        try:
+            response = await provider.text_chat(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                session_id=f"{session_id}:twitch_live_auto_reply",
+                persist=False,
+            )
+            reply_text = str(getattr(response, "completion_text", "") or "").strip()
+        except Exception as e:
+            logger.warning(f"[Twitch] LLM 自动回应失败: {e}")
+            return
+        if not reply_text:
+            return
+        max_length = max(
+            1, self._safe_parse_int(self.config.get("twitch_auto_reply_max_length"), 80)
+        )
+        if len(reply_text) > max_length:
+            reply_text = reply_text[:max_length].rstrip() + "..."
+        _tags, reply_text = self._parse_l2d_tags(reply_text)
+        reply_text = re.sub(r"(?is)<tts>.*?</tts>", "", reply_text).strip()
+        if not reply_text:
+            return
+        await self._send_twitch_reply(session_id, reply_text, events)
+
+    async def _send_twitch_reply(
+        self, session_id: str, reply_text: str, events: list[LiveDanmakuEvent]
+    ) -> None:
+        """发送 Twitch 自动回应：优先生成 TTS 语音，失败回退纯文字，并推 OBS 字幕。"""
+        chain: list[Any] = [Plain(reply_text)]
+        audio_path = ""
+        if bool(self.config.get("twitch_auto_reply_tts_enabled", True)):
+            try:
+                payload = await self._build_bili_live_tts_payload(
+                    session_id,
+                    reply_text,
+                    push_subtitle=False,
+                    schedule_local_playback=False,
+                )
+            except Exception as e:
+                logger.warning(f"[Twitch] TTS 生成失败，回退纯文字: {e}")
+                payload = {}
+            if payload:
+                records = list(payload.get("chain") or [])
+                if records:
+                    chain = records
+                audio_path = str(payload.get("audio_path") or "")
+                if audio_path and bool(
+                    self.config.get("bili_live_tts_local_playback_enabled", True)
+                ):
+                    self._schedule_bili_live_tts_local_playback(audio_path)
+        try:
+            await self.context.send_message(session_id, MessageChain(chain))
+        except Exception as e:
+            logger.warning(f"[Twitch] 发送自动回应失败: {e}")
+        try:
+            await self._push_subtitle(reply_text, source="twitch_live")
+        except Exception as e:
+            logger.warning(f"[Twitch] 推送 OBS 打字机字幕失败: {e}")
+        if audio_path:
+            try:
+                await self._start_bili_live_mouth_sync_for_chain(chain)
+            except Exception as e:
+                logger.debug(f"[Twitch] 启动 TTS 嘴型联动失败: {e}")
+        self._record_twitch_auto_reply_sent(events, reply_text)
+        logger.info(f"[Twitch] 已自动回应弹幕 -> {session_id}: {reply_text}")
+
+    def _recent_twitch_events(self, limit: int = 8) -> list[LiveDanmakuEvent]:
+        limit = max(1, int(limit or 8))
+        return list(self._twitch_events)[-limit:]
+
     def _is_bili_live_running(self) -> bool:
         return bool(self._bili_live_task and not self._bili_live_task.done())
 
@@ -5548,6 +5914,71 @@ $player.Close()
             "直播弹幕会以 AstrBot 原生消息事件的方式触发 Bot 在这里回复。"
         )
 
+    @filter.command("twitch_live_start")
+    async def cmd_twitch_live_start(self, event: AstrMessageEvent, channel: str = ""):
+        """启动 Twitch 直播弹幕监听，可传入频道名，否则使用配置项。"""
+        if not self._is_twitch_enabled():
+            yield event.plain_result(
+                "Twitch 直播功能未启用，请先在插件配置中开启 twitch_enabled。"
+            )
+            return
+        message = await self._start_twitch_live(channel)
+        yield event.plain_result(message)
+
+    @filter.command("twitch_live_stop")
+    async def cmd_twitch_live_stop(self, event: AstrMessageEvent):
+        """停止 Twitch 直播弹幕监听。"""
+        message = await self._stop_twitch_live()
+        yield event.plain_result(message)
+
+    @filter.command("twitch_live_bind_here")
+    async def cmd_twitch_live_bind_here(self, event: AstrMessageEvent):
+        """将当前聊天绑定为 Twitch 直播自动回应输出会话。"""
+        await self.put_kv_data(KV_KEY_TWITCH_REPLY_SESSION, event.unified_msg_origin)
+        yield event.plain_result(
+            "已将当前聊天绑定为 Twitch 直播自动回应会话。开启 twitch_auto_reply_enabled 后，"
+            "Twitch 弹幕触发的回复会发送到这里，并推送到 OBS 打字机字幕。"
+        )
+
+    @filter.command("twitch_live_status")
+    async def cmd_twitch_live_status(self, event: AstrMessageEvent):
+        """查看 Twitch 直播弹幕监听状态。"""
+        enabled = self._is_twitch_enabled()
+        status = "运行中" if self._is_twitch_live_running() else "未运行"
+        channel = self._twitch_channel_name or self._get_twitch_channel()
+        auto_reply = "已开启" if self.config.get("twitch_auto_reply_enabled", False) else "已关闭"
+        lines = [
+            f"Twitch 直播功能：{'已启用' if enabled else '未启用'}",
+            f"监听状态：{status}",
+            f"频道：{channel or '未配置'}",
+            f"自动回应：{auto_reply}",
+            f"最近事件：{len(self._twitch_events)} 条",
+            f"待回应：{len(self._twitch_pending_reply_events)} 条",
+        ]
+        if self._twitch_client and self._twitch_client.last_error:
+            lines.append(f"最近错误：{self._twitch_client.last_error}")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.command("twitch_live_recent")
+    async def cmd_twitch_live_recent(self, event: AstrMessageEvent, limit: int = 10):
+        """查看最近缓存的 Twitch 弹幕。"""
+        if not self._is_twitch_enabled():
+            yield event.plain_result(
+                "Twitch 直播功能未启用，请先在插件配置中开启 twitch_enabled。"
+            )
+            return
+        limit = min(30, max(1, int(limit or 10)))
+        events = self._recent_twitch_events(limit=limit)
+        if not events:
+            yield event.plain_result("暂无 Twitch 弹幕记录。")
+            return
+        now = time.time()
+        lines = []
+        for item in reversed(events):
+            age = max(0, int(now - item.ts))
+            lines.append(f"[{age}s] {item.username}: {item.content}")
+        yield event.plain_result("最近 Twitch 弹幕：\n" + "\n".join(lines))
+
     @filter.command("bili_live_probe")
     async def cmd_bili_live_probe(self, event: AstrMessageEvent, room_id: int = 0):
         """诊断 B站直播间信息和弹幕服务器信息。"""
@@ -5815,7 +6246,13 @@ $player.Close()
         setattr(result, "__vts_subtitle_processed", True)
 
         text = self._extract_subtitle_text_from_result(result)
-        await self._push_subtitle(text, source="bili_live" if event.get_extra("bili_live_auto_reply") else "")
+        if event.get_extra("twitch_live_auto_reply"):
+            source = "twitch_live"
+        elif event.get_extra("bili_live_auto_reply"):
+            source = "bili_live"
+        else:
+            source = ""
+        await self._push_subtitle(text, source=source)
 
     @filter.command("vts_l2d_list")
     async def cmd_vts_l2d_list(self, event: AstrMessageEvent):
