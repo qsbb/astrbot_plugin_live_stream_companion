@@ -1,17 +1,27 @@
 # 更改记录
 
-## 1.8.1
+## 6.0.4.1
+
+- 修复陪伴插件偶发"未连接"：外部主动能力注册从一次性 60 秒重试窗口升级为持续自愈，每 60 秒校验一次 `live_stream_start` / `live_stream_stop` 是否仍可用，陪伴插件加载较晚或重载导致能力丢失时自动补注册，不再需要手动重载直播插件。
+- 新增 `_private_companion_abilities_registered` 注册状态检查（复用陪伴插件 `list_proactive_abilities` 的 `available` 标记）。
+- 未检测到陪伴插件（未安装/加载失败）时，快速重试窗口结束后直接停止自愈，避免无限空转；之后安装/启用陪伴插件并重启 AstrBot，会重新初始化并再次注册。
+
+## 6.0.4
 
 - 新增 Twitch 直播支持：使用匿名 IRC 监听 Twitch 频道弹幕（无需 OAuth token），自动回应可发送到绑定会话并推送到 OBS 打字机字幕。
 - 直播面板 WebUI 新增“Twitch 直播”配置分组，可在网页端直接配置频道、自动回应与字幕范围，保存后即时同步运行时。
 - Twitch 自动回应接入 TTS 语音：复用直播 TTS 生成与播放链路（网页播放/本机播放），生成失败自动回退纯文字；新增 `twitch_auto_reply_tts_enabled` 开关。
-- 打字机字幕触发范围新增 `twitch_live` 和 `live`：前者仅 Twitch，后者同时包含 B站和 Twitch；未知值安全回退到 `bili_live`。
+- 打字机字幕触发范围新增 `twitch_live`：只推送 Twitch 直播自动回应、手动测试和拓展页预览；`bili_live` 与 `all` 行为保持不变。
 - 新增 Twitch 配置项：`twitch_enabled`、`twitch_channel`、`twitch_auto_start`、`twitch_live_log_events`、`twitch_live_debug_log`、`twitch_auto_reply_*` 系列。
 - 新增命令：`/twitch_live_start [频道]`、`/twitch_live_stop`、`/twitch_live_bind_here`、`/twitch_live_status`、`/twitch_live_recent [条数]`。
 - Twitch 自动回应复用现有会话绑定（`/twitch_live_bind_here`，未绑定时回退 B站绑定），内置冷却、每分钟限流和读空气降噪。
 - 新增 Twitch 支持回归测试（IRC 解析、字幕范围判断、自动回应 worker 与读空气）。
-- 优化连接重试为指数退避并限制警告频率；支持频道 URL、IRC 标签完整转义、`/me` 动作和服务端重连指令。
-- 修复冷却/限流导致待处理弹幕滞留、每批最大事件数未生效、发送失败仍消耗配额及 TTS 可见文字丢失问题。
+- 主动开播/下播外部能力新增 `platform` 配置（`auto` 默认优先 Twitch / `bili` / `twitch`），执行器按平台启停弹幕监听，下播时优先停止正在监听的平台。
+- 外部主动能力配置元数据升级：`live_stream_start` / `live_stream_stop` 的 `config_schema` 增加 `type`（`select`/`text`/`bool`/`number`）与 `options`，供陪伴面板渲染控件。
+- 修复：`platform=twitch` 开播时误查 B 站分区缓存的问题，Twitch 分支跳过 B 站分区解析，标题模板按默认“闲聊”兜底。
+- 更新 README 外部主动能力说明（面板控件化）。
+
+## 6.0.3
 
 - 合并直播 TTS 网页播放能力：TTS 音频可推送到字幕 overlay，由 OBS 浏览器源播放，支持 AstrBot 与直播机分开部署。
 - 增加网页播放开关、跨机器字幕服务配置提示，并将播放任务纳入插件生命周期清理。

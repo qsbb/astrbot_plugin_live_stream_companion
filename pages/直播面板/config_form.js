@@ -64,7 +64,7 @@ const LiveConfigForm = (() => {
         <label class="field" for="${escapeHtml(id)}">
           <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
           <select id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}">
-            ${options.map((item) => `<option value="${escapeHtml(item)}" ${String(current) === String(item) ? "selected" : ""}>${escapeHtml(optionLabelForKey(key, item))}</option>`).join("")}
+            ${options.map((item) => `<option value="${escapeHtml(item)}" ${String(current) === String(item) ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
           </select>
         </label>
       `;
@@ -123,26 +123,13 @@ const LiveConfigForm = (() => {
     const options = {
       bilibili_type: ["web", "laplace", "open_live"],
       bili_live_auto_reply_mode: ["native", "direct"],
-      subtitle_scope: ["bili_live", "twitch_live", "live", "all"],
+      subtitle_scope: ["bili_live", "twitch_live", "all"],
       subtitle_position: ["bottom", "center", "top"],
       mouth_sync_mode: ["set", "add"],
       soullink_mode: ["emotion", "full"],
       soullink_motion_style: ["natural", "lively", "calm", "shy"],
     };
     return options[key] || [];
-  }
-
-  function optionLabelForKey(key, value) {
-    const labels = {
-      bilibili_type: { web: "Web 直播间", laplace: "Laplace 桥接", open_live: "B站开放平台" },
-      bili_live_auto_reply_mode: { native: "AstrBot 原生流程", direct: "直接调用模型" },
-      subtitle_scope: { bili_live: "仅 B站直播", twitch_live: "仅 Twitch 直播", live: "全部直播来源", all: "所有 Bot 回复" },
-      subtitle_position: { bottom: "底部", center: "中部", top: "顶部" },
-      mouth_sync_mode: { set: "覆盖参数", add: "叠加参数" },
-      soullink_mode: { emotion: "情绪表演", full: "完整表演" },
-      soullink_motion_style: { natural: "自然", lively: "活泼", calm: "平静", shy: "害羞" },
-    };
-    return labels[key]?.[value] || value;
   }
 
   function isColorKey(key) {

@@ -282,7 +282,6 @@ function resetConfigForm() {
 function renderOverview() {
   const data = state.overview || {};
   const live = data.live || {};
-  const twitch = data.twitch || {};
   const memory = data.memory || {};
   const autoReply = data.auto_reply || {};
   const companion = data.companion || {};
@@ -292,17 +291,15 @@ function renderOverview() {
     state.configValues = { ...state.configValues, ...data.config };
     renderConfig();
   }
-  const anyRunning = Boolean(live.running || twitch.running);
-  els.subtitle.textContent = [
-    `B站：${live.running ? `监听中（${live.room_id || "未配置房间"}）` : "未运行"}`,
-    `Twitch：${twitch.connected ? `已连接（${twitch.channel || "未配置频道"}）` : (twitch.running ? "重连中" : "未运行")}`,
-  ].join(" · ");
-  els.liveBadge.textContent = anyRunning ? "监听中" : "未运行";
-  els.liveBadge.className = `badge ${anyRunning ? "ok" : "idle"}`;
+  els.subtitle.textContent = live.running
+    ? `直播监听中 · 房间 ${live.room_id || "未配置"} · ${formatDuration(live.duration_seconds)}`
+    : `离线配置可用 · 直播监听未运行 · 房间 ${live.room_id || data.config?.bilibili_room_id || "未配置"}`;
+  els.liveBadge.textContent = live.running ? "直播中" : "未运行";
+  els.liveBadge.className = `badge ${live.running ? "ok" : "idle"}`;
 
   renderStats([
-    ["直播事件", (live.session_count || 0) + (twitch.cache_count || 0), "B站本场 + Twitch 缓存"],
-    ["缓存事件", (live.cache_count || 0) + (twitch.cache_count || 0), "两平台最近保留"],
+    ["直播事件", live.session_count || 0, "本场累计"],
+    ["缓存事件", live.cache_count || 0, "最近保留"],
     ["直播记忆", memory.memory_count || 0, "可承接条目"],
     ["观众画像", data.viewers?.count || 0, "累计观众"],
     ["本分钟回复", `${autoReply.used_this_minute || 0}/${autoReply.max_per_minute || 0}`, "普通弹幕限流"],
@@ -327,10 +324,6 @@ function renderOverview() {
     ["TTS 本机播放", boolText(autoReply.local_playback)],
     ["每分钟上限", autoReply.max_per_minute === 0 ? "不限" : autoReply.max_per_minute],
     ["豁免事件", (autoReply.exempt_event_types || []).join("、") || "无"],
-    ["Twitch 监听", twitch.connected ? "已连接（只读）" : (twitch.running ? "重连中" : "未运行")],
-    ["Twitch 频道", twitch.channel || "未配置"],
-    ["Twitch 自动回应", boolText(twitch.auto_reply_enabled)],
-    ["Twitch 待回应", twitch.pending || 0],
   ]);
   renderMetricList(els.stagePanel, [
     ["VTS", data.vts?.connected ? "已连接" : "未连接"],
@@ -380,13 +373,11 @@ function renderStats(items) {
 
 function renderLiveFlow(data) {
   const live = data.live || {};
-  const twitch = data.twitch || {};
   const companion = data.companion || {};
   const memory = data.memory || {};
   const living = data.living_memory || {};
   const steps = [
     ["B站监听", live.running ? "ok" : "idle", live.running ? `${live.type}/${live.backend}` : "可在配置页准备"],
-    ["Twitch 监听", twitch.connected ? "ok" : "idle", twitch.connected ? `${twitch.channel || "未配置"} · 匿名只读` : (twitch.running ? "连接重试中" : "可在配置页准备")],
     ["事件缓存", live.cache_count ? "ok" : "idle", `${live.cache_count || 0} 条`],
     ["自动回应", data.auto_reply?.enabled ? "ok" : "idle", data.auto_reply?.mode || "native"],
     ["直播记忆", memory.enabled ? "ok" : "idle", `${memory.memory_count || 0} 条记忆`],
@@ -546,7 +537,7 @@ function renderEvents() {
   }
   els.eventRows.innerHTML = events.map((item) => `
     <article class="event-row">
-      <span>${escapeHtml(`${platformText(item.platform)} · ${item.type}`)}</span>
+      <span>${escapeHtml(item.type)}</span>
       <div>
         <b>${escapeHtml(item.username || "系统")}</b>
         <p>${escapeHtml(item.content || item.display || "--")}</p>
@@ -554,10 +545,6 @@ function renderEvents() {
       <time>${escapeHtml(formatTime(item.ts))}</time>
     </article>
   `).join("");
-}
-
-function platformText(platform) {
-  return String(platform || "").toLowerCase() === "twitch" ? "Twitch" : "B站";
 }
 
 function renderConfig() {

@@ -2,14 +2,13 @@ name: astrbot_plugin_live_stream_companion
 display_name: 我会直播圈米养你
 author: menglimi
 author_url: https://github.com/menglimi
-description: astrbot_plugin_live_stream_companion 是面向 AstrBot 的直播陪伴插件，提供 B 站和 Twitch 直播弹幕读取、自动回应、可选 Soullink 连续情绪表演、VTube Studio 动作、OBS 字幕/开播控制、TTS 嘴型联动和直播记忆。
-desc: 为 AstrBot 提供 B 站/Twitch 弹幕、自动回应、Soullink 情绪表演、Live2D、OBS 字幕/开播控制、嘴型联动和直播记忆。
+description: astrbot_plugin_live_stream_companion 是面向 AstrBot 的直播陪伴插件，提供 B 站直播弹幕读取、自动回应、可选 Soullink 连续情绪表演、VTube Studio 动作、OBS 字幕/开播控制、TTS 嘴型联动和直播记忆。
+desc: 为 AstrBot 提供 B 站弹幕、自动回应、Soullink 情绪表演、Live2D、OBS 字幕/开播控制、嘴型联动和直播记忆。
 repo: https://github.com/menglimi/astrbot_plugin_live_stream_companion
 category: 娱乐
 tags:
   - 直播
   - B站弹幕
-  - Twitch
   - Live2D
   - Soullink
   - VTube Studio
@@ -35,14 +34,13 @@ help: |
   - /分区 <名称/拼音/area_id> 设置 B 站直播分区
   - 拓展页：插件详情页中打开“直播面板”，查看直播状态、记忆、观众画像和最近事件
 
-  Twitch 直播（匿名 IRC 只读）:
-  - /twitch_live_start <频道名或URL> 启动 Twitch 弹幕监听
+  Twitch 直播:
+  - /twitch_live_start <频道名> 启动 Twitch 弹幕监听
   - /twitch_live_stop 停止 Twitch 弹幕监听
   - /twitch_live_bind_here 将当前聊天绑定为 Twitch 自动回应输出会话
   - /twitch_live_status 查看 Twitch 监听状态
   - /twitch_live_recent [数量] 查看最近缓存的 Twitch 弹幕
   - 直播面板 WebUI 的“Twitch 直播”分组可直接配置频道、自动回应和字幕范围
-  - 自动回应输出到绑定会话、OBS 字幕和 TTS，不会代发到 Twitch 聊天室
 
   字幕与嘴型:
   - /subtitle_status 查看字幕 overlay 状态
@@ -51,7 +49,7 @@ help: |
   - /mouth_sync_test 2 测试嘴型联动
 
   初次使用建议先发送 /vts_auth 完成 VTube Studio 授权，再通过 /vts_status 和 /vts_list 检查模型热键。直播弹幕可使用 /bili_live_start <房间号> 临时启动；需要自动回应时，先发送 /bili_live_bind_here，再开启 bili_live_auto_reply_enabled。OBS 字幕默认地址为 http://127.0.0.1:18081/。如需 B 站开播推流，建议在 OBS 安装 obs-bilibili-stream。若安装“我会永远陪着你”，可在陪伴面板外部主动能力中启用主动开播/下播。
-version: 1.8.1
+version: 6.0.4.1
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.16,<5"

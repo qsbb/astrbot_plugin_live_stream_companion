@@ -4,7 +4,7 @@
 
 - 插件名：`astrbot_plugin_live_stream_companion`
 - 中文名：`我会直播圈米养你`
-- 当前版本：`1.8.1`
+- 当前版本：`6.0.4.1`
 - 适配平台：`aiocqhttp` / OneBot v11
 - AstrBot 版本：`>=4.16,<5`
 - 编码要求：UTF-8
@@ -121,7 +121,7 @@ twitch_channel = 你的频道名
 /twitch_live_bind_here
 ```
 
-开启 `twitch_auto_reply_enabled` 后，Twitch 弹幕会触发 LLM 回复，发送到绑定会话并推送到 OBS 打字机字幕（字幕范围可设为 `twitch_live` 或 `live`）。回复默认带 TTS 语音，生成失败自动回退纯文字。匿名 IRC 仅用于读取公开弹幕，插件不会代发消息到 Twitch 聊天室。
+开启 `twitch_auto_reply_enabled` 后，Twitch 弹幕会触发 LLM 回复，发送到绑定会话并推送到 OBS 打字机字幕（字幕范围设为 `twitch_live`）。回复默认带 TTS 语音，生成失败自动回退纯文字。
 
 ### 3. 设置直播分区
 
@@ -232,9 +232,9 @@ subtitle_scope = twitch_live
 
 插件内置 Twitch 匿名 IRC 弹幕监听，无需申请 OAuth token：
 
-1. 在插件配置中开启 `twitch_enabled`，填写 `twitch_channel`（频道名或 Twitch 频道 URL），保持 `twitch_auto_start` 开启。
+1. 在插件配置中开启 `twitch_enabled`，填写 `twitch_channel`（频道名，不需要 `#` 前缀），保持 `twitch_auto_start` 开启。
 2. 在目标聊天发送 `/twitch_live_bind_here` 绑定自动回应输出会话（也可以复用 `/bili_live_bind_here` 的绑定）。
-3. 开启 `twitch_auto_reply_enabled` 后，Twitch 弹幕会按冷却自动调用 LLM 生成回复，发送到绑定会话，并推送到 OBS 打字机字幕（字幕范围需为 `twitch_live`、`live` 或 `all`）；不会回写 Twitch 聊天室。
+3. 开启 `twitch_auto_reply_enabled` 后，Twitch 弹幕会按冷却自动调用 LLM 生成回复，发送到绑定会话，并推送到 OBS 打字机字幕（字幕范围需为 `twitch_live` 或 `all`）。
 4. 可用命令：`/twitch_live_start [频道]`、`/twitch_live_stop`、`/twitch_live_status`、`/twitch_live_recent [条数]`。
 
 Twitch 自动回应带冷却、每分钟限流和读空气降噪（纯寒暄默认静默），相关参数见 `twitch_auto_reply_*` 配置项。
@@ -374,7 +374,13 @@ https://github.com/Zarosmm/obs-bilibili-stream/releases
 陪伴面板 / 模块配置 / 外部主动能力
 ```
 
-手动启用并配置。
+手动启用并配置。陪伴面板中的配置项已渲染为下拉菜单/开关/输入框（无需手写 JSON），`platform` 为下拉选择，布尔开关与数字/文本输入框一应俱全。
+
+监听平台由 `platform` 配置决定：
+
+- `auto`（默认）：开播时优先 Twitch（`twitch_enabled` 开启且已配置频道），否则 B 站；下播时优先停止正在监听的平台。
+- `bili`：固定 B 站弹幕监听。
+- `twitch`：固定 Twitch 弹幕监听。
 
 安全规则：
 
@@ -498,8 +504,7 @@ bilibili_ROOM_OWNER_AUTH_CODE
 | 配置 | 默认 | 说明 |
 |---|---:|---|
 | `twitch_enabled` | `false` | Twitch 功能总开关 |
-| `twitch_channel` | `""` | 要监听的 Twitch 频道名或频道 URL |
-| `twitch_live_cache_size` | `200` | 最近 Twitch 弹幕缓存数量 |
+| `twitch_channel` | `""` | 要监听的 Twitch 频道名，不需要 `#` 前缀 |
 | `twitch_auto_start` | `true` | 插件启动时自动开始监听 |
 | `twitch_auto_reply_enabled` | `false` | Twitch 弹幕自动回应 |
 | `twitch_auto_reply_tts_enabled` | `true` | 自动回应生成 TTS 语音，失败回退纯文字 |
