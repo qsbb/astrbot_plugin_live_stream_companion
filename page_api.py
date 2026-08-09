@@ -59,14 +59,25 @@ class LiveStreamCompanionPageApi:
             store = plugin._private_companion_live_state_store(companion) if companion else {}
             events = list(getattr(plugin, "_bili_events", []))
             session_events = list(getattr(plugin, "_bili_session_events", []))
+            twitch_events = list(getattr(plugin, "_twitch_events", []))
+            recent_events = [
+                (item, "bilibili") for item in events[-20:]
+            ] + [
+                (item, "twitch") for item in twitch_events[-20:]
+            ]
+            recent_events.sort(
+                key=lambda row: float(getattr(row[0], "ts", 0.0) or 0.0),
+                reverse=True,
+            )
             return self._ok(
                 {
                     "plugin": {
                         "name": PLUGIN_NAME,
                         "display_name": "我会直播圈米养你",
-                        "version": "6.0.3",
+                        "version": "1.8.1",
                     },
                     "live": self._live_summary(events, session_events),
+                    "twitch": self._twitch_summary(twitch_events),
                     "obs_control": await self._obs_control_status(check_obs_ws=True),
                     "vts": self._vts_summary(),
                     "subtitle": self._subtitle_summary(),
@@ -78,7 +89,10 @@ class LiveStreamCompanionPageApi:
                     "living_memory": plugin._living_memory_summary(),
                     "integration": self._integration_summary(companion, store),
                     "viewers": self._viewer_summary(store),
-                    "recent_events": [self._event_payload(item) for item in events[-20:]][::-1],
+                    "recent_events": [
+                        self._event_payload(item, platform=platform)
+                        for item, platform in recent_events[:20]
+                    ],
                     "config": self._config_summary(),
                 }
             )
@@ -849,6 +863,27 @@ class LiveStreamCompanionPageApi:
             "last_error": getattr(getattr(plugin, "_bili_live_client", None), "last_error", "") or plugin._get_bili_live_task_error(),
         }
 
+    def _twitch_summary(self, events: list[Any]) -> dict[str, Any]:
+        plugin = self.plugin
+        client = getattr(plugin, "_twitch_client", None)
+        started = float(getattr(plugin, "_twitch_session_started_at", 0.0) or 0.0)
+        now = time.time()
+        marks = list(getattr(plugin, "_twitch_auto_reply_minute_marks", []))
+        return {
+            "enabled": bool(plugin._is_twitch_enabled()),
+            "running": bool(plugin._is_twitch_live_running()),
+            "connected": bool(plugin._is_twitch_connected()),
+            "channel": getattr(plugin, "_twitch_channel_name", "") or plugin._get_twitch_channel(),
+            "cache_count": len(events),
+            "pending": len(getattr(plugin, "_twitch_pending_reply_events", [])),
+            "session_started_at": started,
+            "duration_seconds": int(now - started) if started else 0,
+            "last_error": getattr(client, "last_error", "") if client else "",
+            "auto_reply_enabled": bool(plugin.config.get("twitch_auto_reply_enabled", False)),
+            "used_this_minute": len([item for item in marks if now - float(item) < 60]),
+            "max_per_minute": self._int(plugin.config.get("twitch_auto_reply_max_per_minute"), 6),
+        }
+
     def _vts_summary(self) -> dict[str, Any]:
         plugin = self.plugin
         return {
@@ -1019,10 +1054,13 @@ class LiveStreamCompanionPageApi:
     def _config_summary(self) -> dict[str, Any]:
         return self.config_manager.summary()
 
-    def _event_payload(self, event: Any) -> dict[str, Any]:
+    def _event_payload(self, event: Any, *, platform: str = "") -> dict[str, Any]:
         if event is None:
             return {}
+        raw = getattr(event, "raw", None)
+        raw_platform = raw.get("platform") if isinstance(raw, dict) else ""
         return {
+            "platform": str(platform or raw_platform or "bilibili"),
             "type": str(getattr(event, "event_type", "") or ""),
             "username": self._single_line(getattr(event, "username", ""), 60),
             "content": self._single_line(getattr(event, "content", ""), 180),

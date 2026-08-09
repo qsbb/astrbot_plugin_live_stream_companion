@@ -24,21 +24,39 @@ class SubtitleMixin:
 
     def _subtitle_scope(self) -> str:
         scope = str(self.config.get("subtitle_scope") or "bili_live").strip().lower()
-        return scope if scope in {"all", "bili_live"} else "all"
+        return scope if scope in {"all", "live", "bili_live", "twitch_live"} else "bili_live"
 
     def _event_should_push_subtitle(self, event: Any) -> bool:
-        if self._subtitle_scope() == "all":
+        scope = self._subtitle_scope()
+        if scope == "all":
             return True
-        return bool(event.get_extra("bili_live_auto_reply"))
+        is_bili = bool(event.get_extra("bili_live_auto_reply"))
+        is_twitch = bool(event.get_extra("twitch_live_auto_reply"))
+        if scope == "live":
+            return is_bili or is_twitch
+        if scope == "twitch_live":
+            return is_twitch
+        return is_bili
 
     def _source_should_push_subtitle(self, source: str = "") -> bool:
-        if self._subtitle_scope() == "all":
+        scope = self._subtitle_scope()
+        if scope == "all":
             return True
         normalized = str(source or "").strip().lower()
         if normalized == "together_companion":
-            checker = getattr(self, "_is_bili_live_running", None)
-            return bool(callable(checker) and checker())
-        return normalized in {"bili_live", "manual", "preview"}
+            checkers = []
+            if scope in {"live", "bili_live"}:
+                checkers.append(getattr(self, "_is_bili_live_running", None))
+            if scope in {"live", "twitch_live"}:
+                checkers.append(getattr(self, "_is_twitch_live_running", None))
+            return any(callable(checker) and checker() for checker in checkers)
+        if normalized in {"manual", "preview"}:
+            return True
+        if scope == "live":
+            return normalized in {"bili_live", "twitch_live"}
+        if scope == "twitch_live":
+            return normalized == "twitch_live"
+        return normalized == "bili_live"
 
     def _get_subtitle_style(self) -> dict[str, Any]:
         return {
@@ -128,7 +146,10 @@ class SubtitleMixin:
         if not self._is_subtitle_enabled():
             return
         if not self._source_should_push_subtitle(source):
-            logger.debug("[字幕] 当前 subtitle_scope=bili_live，已跳过非直播字幕来源。")
+            logger.debug(
+                "[字幕] 当前 subtitle_scope=%s，已跳过不匹配的字幕来源。",
+                self._subtitle_scope(),
+            )
             return
         if not self._subtitle_server:
             await self._start_subtitle_server_if_enabled()
