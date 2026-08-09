@@ -1336,6 +1336,10 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
     def _should_collect_for_auto_reply(self, event: LiveDanmakuEvent) -> bool:
         if not self.config.get("bili_live_auto_reply_enabled", False):
             return False
+        if self.config.get("bili_live_auto_reply_skip_emoticon_danmaku", True) and (
+            event.is_emoticon_danmaku or event.is_voice_danmaku
+        ):
+            return False
         if event.event_type in self._bili_guaranteed_support_types():
             if event.event_id in self._bili_acknowledged_support_event_ids:
                 return False

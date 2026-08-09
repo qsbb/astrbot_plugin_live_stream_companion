@@ -87,6 +87,16 @@ class LiveDanmakuEvent:
     user_id: str = ""
     event_id: str = ""
     amount: float | int | None = None
+    dm_type: int = 0
+    emoticon: dict[str, Any] = dataclasses.field(default_factory=dict)
+
+    @property
+    def is_emoticon_danmaku(self) -> bool:
+        return self.event_type == "danmaku" and self.dm_type == 1
+
+    @property
+    def is_voice_danmaku(self) -> bool:
+        return self.event_type == "danmaku" and self.dm_type == 2
 
     def __post_init__(self) -> None:
         if not self.user_id:
@@ -233,6 +243,18 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_emoticon_options(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
 class BilibiliBlivedmClient:
     """Web live client backed by the vendored astrbot_plugin_bilibili_live blivedm."""
 
@@ -342,6 +364,11 @@ class BilibiliBlivedmClient:
                 username,
                 str(getattr(message, "content", "") or ""),
                 raw=raw, user_id=user_id,
+                dm_type=_safe_int(getattr(message, "dm_type", 0)),
+                emoticon=_normalize_emoticon_options(
+                    getattr(message, "emoticon", None)
+                    or getattr(message, "emoticon_options", "")
+                ),
             )
 
         if isinstance(message, blivedm_message.GiftMessage):
@@ -641,7 +668,11 @@ class BilibiliLiveClient:
         username = str(row.get("nickname") or row.get("uname") or "观众")
         ts = self._parse_history_timeline(row.get("timeline"))
         raw = {"cmd": "DANMU_MSG_HISTORY", "data": row}
-        return LiveDanmakuEvent("danmaku", username, content, ts=ts, raw=raw)
+        return LiveDanmakuEvent(
+            "danmaku", username, content, ts=ts, raw=raw,
+            dm_type=_safe_int(row.get("dm_type"), 0),
+            emoticon=_normalize_emoticon_options(row.get("emoticon") or {}),
+        )
 
     async def fetch_recent_history_events(
         self, limit: int = 10
@@ -841,7 +872,12 @@ class BilibiliLiveClient:
                 username = str(info[2][1])
             except Exception:
                 return None
-            return LiveDanmakuEvent("danmaku", username, content, raw=payload)
+            info0 = info[0] if isinstance(info, list) and info and isinstance(info[0], list) else []
+            return LiveDanmakuEvent(
+                "danmaku", username, content, raw=payload,
+                dm_type=_safe_int(info0[12]) if len(info0) > 12 else 0,
+                emoticon=_normalize_emoticon_options(info0[13]) if len(info0) > 13 else {},
+            )
 
         if cmd == "SEND_GIFT":
             data = payload.get("data") or {}
@@ -1056,7 +1092,11 @@ class BilibiliLaplaceClient:
         message = str(payload.get("message") or payload.get("text") or "")
 
         if event_type == "message":
-            return LiveDanmakuEvent("danmaku", username, message, raw=payload)
+            return LiveDanmakuEvent(
+                "danmaku", username, message, raw=payload,
+                dm_type=_safe_int(payload.get("dm_type"), 0),
+                emoticon=_normalize_emoticon_options(payload.get("emoticon") or {}),
+            )
 
         if event_type == "superchat":
             price = payload.get("priceNormalized") or payload.get("price")
@@ -1471,7 +1511,17 @@ class BilibiliOpenLiveClient:
         if cmd in {"LIVE_OPEN_PLATFORM_DM", "LIVE_OPEN_PLATFORM_DM_MIRROR"}:
             username = str(data.get("uname") or "观众")
             content = str(data.get("msg") or "")
-            return LiveDanmakuEvent("danmaku", username, content, raw=payload)
+            dm_type = _safe_int(data.get("dm_type"), 0)
+            emoticon: dict[str, Any] = {}
+            if dm_type == 1:
+                emoticon = {
+                    "url": str(data.get("emoji_img_url") or ""),
+                    "emoticon_unique": str(data.get("emoticon_unique") or ""),
+                }
+            return LiveDanmakuEvent(
+                "danmaku", username, content, raw=payload,
+                dm_type=dm_type, emoticon=emoticon,
+            )
 
         if cmd == "LIVE_OPEN_PLATFORM_SEND_GIFT":
             username = str(data.get("uname") or "观众")

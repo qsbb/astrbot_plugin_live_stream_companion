@@ -672,6 +672,12 @@
       "danmaku"
     ]
   },
+  "bili_live_auto_reply_skip_emoticon_danmaku": {
+    "description": "自动回应跳过表情/语音弹幕",
+    "type": "bool",
+    "hint": "开启后，dm_type 为表情弹幕（1）或语音弹幕（2）时不会触发 LLM 自动回应，只响应普通文字弹幕",
+    "default": true
+  },
   "bili_live_auto_reply_guaranteed_event_types": {
     "description": "保证鸣谢的事件类型",
     "type": "list",
