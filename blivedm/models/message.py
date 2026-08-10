@@ -1,5 +1,5 @@
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from . import open_live as open_models
@@ -63,6 +63,10 @@ class DanmakuMessage(BiliMessage):
     """粉丝勋章名称"""
     is_admin: bool = False
     """是否为房管"""
+    dm_type: int = 0
+    """弹幕类型：0文本，1表情，2语音"""
+    emoticon: dict[str, Any] = field(default_factory=dict)
+    """表情信息（dm_type 为 1 时包含 emoticon_unique/url 等）"""
 
     @classmethod
     def from_web_message(
@@ -83,6 +87,8 @@ class DanmakuMessage(BiliMessage):
             medal_level=message.medal_level,
             medal_name=message.medal_name,
             is_admin=message.admin == 1,
+            dm_type=getattr(message, "dm_type", 0),
+            emoticon=getattr(message, "emoticon_options_dict", {}),
         )
 
     @classmethod
@@ -90,6 +96,9 @@ class DanmakuMessage(BiliMessage):
         cls, message: open_models.DanmakuMessage, raw_data: dict
     ) -> "DanmakuMessage":
         """从开放平台消息转换"""
+        emoticon: dict[str, Any] = {}
+        if getattr(message, "dm_type", 0) == 1 and getattr(message, "emoji_img_url", ""):
+            emoticon = {"url": message.emoji_img_url}
         return cls(
             platform="open_live",
             room_id=message.room_id,
@@ -104,6 +113,8 @@ class DanmakuMessage(BiliMessage):
             medal_level=message.fans_medal_level,
             medal_name=message.fans_medal_name,
             is_admin=message.is_admin == 1,
+            dm_type=getattr(message, "dm_type", 0),
+            emoticon=emoticon,
         )
 
 
