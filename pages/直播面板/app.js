@@ -319,6 +319,7 @@ function renderOverview() {
     ["身份来源", streamer.source || "fallback"],
     ["待回应事件", autoReply.pending || 0],
     ["冷却", `${autoReply.cooldown_seconds || 0}s`],
+    ["跳过表情/语音", boolText(autoReply.skip_rich_danmaku)],
     ["读空气降噪", boolText(autoReply.air_guard)],
     ["陪伴读空气", boolText(autoReply.air_guard_model)],
     ["回应阈值", autoReply.air_guard_threshold || 2.5],
@@ -546,7 +547,7 @@ function renderEvents() {
   }
   els.eventRows.innerHTML = events.map((item) => `
     <article class="event-row">
-      <span>${escapeHtml(`${platformText(item.platform)} · ${item.type}`)}</span>
+      <span>${escapeHtml(`${platformText(item.platform)} · ${liveEventTypeText(item)}`)}</span>
       <div>
         <b>${escapeHtml(item.username || "系统")}</b>
         <p>${escapeHtml(item.content || item.display || "--")}</p>
@@ -558,6 +559,13 @@ function renderEvents() {
 
 function platformText(platform) {
   return String(platform || "").toLowerCase() === "twitch" ? "Twitch" : "B站";
+}
+
+function liveEventTypeText(item) {
+  if (String(item?.type || "") !== "danmaku") return String(item?.type || "未知事件");
+  if (Number(item?.dm_type) === 1) return "表情弹幕";
+  if (Number(item?.dm_type) === 2) return "语音弹幕";
+  return "文字弹幕";
 }
 
 function renderConfig() {

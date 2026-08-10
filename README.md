@@ -186,6 +186,8 @@ bili_live_auto_reply_mode = native
 
 如果 Bot 一直在和弹幕打招呼，建议保持 `bili_live_auto_reply_air_guard_enabled = true`。默认规则会静默单条“你好 / 来了 / 贴贴 / 哈哈 / 6 / 晚安”等轻互动；有具体问题、请求、纠错、多人连续话题，或礼物、SC、上舰时仍会正常回应。
 
+大表情、小表情和语音弹幕会按 B站协议的 `dm_type` 与普通文字弹幕区分。默认开启 `bili_live_auto_reply_skip_emoticon_danmaku`，这些事件仍会进入最近事件、直播记忆与观众统计，但不会单独触发 LLM 自动回应。需要回应它们时，可在直播面板的“自动回应”分组关闭该开关。
+
 身份模式：
 
 - `host`：主播模式。Bot 以主播/Bot 本人的身份直接回应弹幕，适合虚拟主播本人开播。
@@ -520,6 +522,7 @@ bilibili_ROOM_OWNER_AUTH_CODE
 | `bili_live_cache_size` | `80` | 内存事件缓存数量 |
 | `bili_live_auto_reply_enabled` | `false` | 是否自动回应弹幕 |
 | `bili_live_auto_reply_mode` | `native` | 推荐 `native` |
+| `bili_live_auto_reply_skip_emoticon_danmaku` | `true` | 表情和语音弹幕仍记录，但不触发 LLM 自动回应 |
 | `bili_live_auto_reply_max_per_minute` | `6` | 每分钟最多自动回应 |
 | `bili_live_auto_reply_sync_tts_subtitle` | `true` | 开启后直播自动回应等待 TTS，并与打字机字幕同步 |
 | `bili_live_tts_local_playback_enabled` | `true` | 直播 TTS 生成后由本插件直接本机播放 |

@@ -97,7 +97,10 @@ class DanmakuMessage(BiliMessage):
     ) -> "DanmakuMessage":
         """从开放平台消息转换"""
         emoticon: dict[str, Any] = {}
-        if getattr(message, "dm_type", 0) == 1 and getattr(message, "emoji_img_url", ""):
+        if (
+            getattr(message, "dm_type", 0) == 1
+            and getattr(message, "emoji_img_url", "")
+        ):
             emoticon = {"url": message.emoji_img_url}
         return cls(
             platform="open_live",

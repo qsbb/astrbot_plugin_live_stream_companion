@@ -99,6 +99,8 @@ class LiveDanmakuEvent:
         return self.event_type == "danmaku" and self.dm_type == 2
 
     def __post_init__(self) -> None:
+        self.dm_type = _safe_int(self.dm_type, 0)
+        self.emoticon = _normalize_emoticon_options(self.emoticon)
         if not self.user_id:
             self.user_id = _extract_bilibili_user_id(self.raw)
         if self.amount is None:
@@ -363,7 +365,8 @@ class BilibiliBlivedmClient:
                 "danmaku",
                 username,
                 str(getattr(message, "content", "") or ""),
-                raw=raw, user_id=user_id,
+                raw=raw,
+                user_id=user_id,
                 dm_type=_safe_int(getattr(message, "dm_type", 0)),
                 emoticon=_normalize_emoticon_options(
                     getattr(message, "emoticon", None)
@@ -669,7 +672,11 @@ class BilibiliLiveClient:
         ts = self._parse_history_timeline(row.get("timeline"))
         raw = {"cmd": "DANMU_MSG_HISTORY", "data": row}
         return LiveDanmakuEvent(
-            "danmaku", username, content, ts=ts, raw=raw,
+            "danmaku",
+            username,
+            content,
+            ts=ts,
+            raw=raw,
             dm_type=_safe_int(row.get("dm_type"), 0),
             emoticon=_normalize_emoticon_options(row.get("emoticon") or {}),
         )
@@ -872,11 +879,22 @@ class BilibiliLiveClient:
                 username = str(info[2][1])
             except Exception:
                 return None
-            info0 = info[0] if isinstance(info, list) and info and isinstance(info[0], list) else []
+            info0 = (
+                info[0]
+                if isinstance(info, list) and info and isinstance(info[0], list)
+                else []
+            )
             return LiveDanmakuEvent(
-                "danmaku", username, content, raw=payload,
+                "danmaku",
+                username,
+                content,
+                raw=payload,
                 dm_type=_safe_int(info0[12]) if len(info0) > 12 else 0,
-                emoticon=_normalize_emoticon_options(info0[13]) if len(info0) > 13 else {},
+                emoticon=(
+                    _normalize_emoticon_options(info0[13])
+                    if len(info0) > 13
+                    else {}
+                ),
             )
 
         if cmd == "SEND_GIFT":
@@ -1093,7 +1111,10 @@ class BilibiliLaplaceClient:
 
         if event_type == "message":
             return LiveDanmakuEvent(
-                "danmaku", username, message, raw=payload,
+                "danmaku",
+                username,
+                message,
+                raw=payload,
                 dm_type=_safe_int(payload.get("dm_type"), 0),
                 emoticon=_normalize_emoticon_options(payload.get("emoticon") or {}),
             )
@@ -1519,8 +1540,12 @@ class BilibiliOpenLiveClient:
                     "emoticon_unique": str(data.get("emoticon_unique") or ""),
                 }
             return LiveDanmakuEvent(
-                "danmaku", username, content, raw=payload,
-                dm_type=dm_type, emoticon=emoticon,
+                "danmaku",
+                username,
+                content,
+                raw=payload,
+                dm_type=dm_type,
+                emoticon=emoticon,
             )
 
         if cmd == "LIVE_OPEN_PLATFORM_SEND_GIFT":

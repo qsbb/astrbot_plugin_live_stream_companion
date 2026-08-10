@@ -924,6 +924,11 @@ class LiveStreamCompanionPageApi:
             "used_this_minute": len(recent_marks),
             "last_reply_at": float(getattr(self.plugin, "_bili_last_auto_reply_at", 0.0) or 0.0),
             "exempt_event_types": list(self.plugin._bili_auto_reply_priority_types()),
+            "skip_rich_danmaku": bool(
+                self.plugin.config.get(
+                    "bili_live_auto_reply_skip_emoticon_danmaku", True
+                )
+            ),
             "air_guard": bool(self.plugin.config.get("bili_live_auto_reply_air_guard_enabled", True)),
             "air_guard_model": bool(self.plugin.config.get("bili_live_auto_reply_air_guard_model_enabled", True)),
             "air_guard_threshold": self._float(self.plugin.config.get("bili_live_auto_reply_air_guard_threshold"), 2.5),
@@ -1062,6 +1067,7 @@ class LiveStreamCompanionPageApi:
         return {
             "platform": str(platform or raw_platform or "bilibili"),
             "type": str(getattr(event, "event_type", "") or ""),
+            "dm_type": self._int(getattr(event, "dm_type", 0)),
             "username": self._single_line(getattr(event, "username", ""), 60),
             "content": self._single_line(getattr(event, "content", ""), 180),
             "display": self._single_line(event.display_text() if hasattr(event, "display_text") else "", 220),
