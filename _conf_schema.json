@@ -807,6 +807,45 @@
     "hint": "开启后，直播自动回应会先等待 TTS 音频生成，再同时发送语音、可见文字并推送 OBS 打字机字幕；关闭时文字和字幕先出，TTS 后台补发。需要同时开启“直播自动回应请求语音回复”。",
     "default": true
   },
+  "live_tts_backend": {
+    "description": "直播 TTS 后端",
+    "type": "string",
+    "hint": "astrbot_provider 使用当前会话的 AstrBot TTS；registered_service 调用已注册工具所属插件的公开合成服务；auto 在外部服务不可用时回退 AstrBot TTS。",
+    "options": [
+      "astrbot_provider",
+      "registered_service",
+      "auto"
+    ],
+    "default": "astrbot_provider"
+  },
+  "live_tts_external_tool_name": {
+    "description": "外部 TTS 注册工具名",
+    "type": "string",
+    "hint": "例如 voice_hub_speak。插件不会执行这个工具，而是借此找到它所属的插件并调用公开合成服务。",
+    "default": ""
+  },
+  "live_tts_external_service_method": {
+    "description": "外部 TTS 公开服务方法",
+    "type": "string",
+    "hint": "默认 text_to_speech；Voice Hub 也可填写 render_pcm_wav。方法必须只返回音频路径或含 path 的结果，不能自行发送消息。",
+    "default": "text_to_speech"
+  },
+  "live_tts_external_plugin_name": {
+    "description": "外部 TTS 插件名校验",
+    "type": "string",
+    "hint": "可选。填写后只接受属于该插件的服务，例如 astrbot_plugin_voice_hub。",
+    "default": ""
+  },
+  "live_tts_external_timeout_seconds": {
+    "description": "外部 TTS 超时（秒）",
+    "type": "int",
+    "slider": {
+      "min": 5,
+      "max": 180,
+      "step": 5
+    },
+    "default": 60
+  },
   "bili_live_tts_local_playback_enabled": {
     "description": "直播 TTS 本机播放",
     "type": "bool",

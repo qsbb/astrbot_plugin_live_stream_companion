@@ -264,6 +264,25 @@ Twitch 自动回应默认生成 **TTS 语音**：音频复用直播 TTS 的网�
 subtitle_scope = all
 ```
 
+### 5. 使用已注册插件提供直播 TTS
+
+默认 `live_tts_backend=astrbot_provider`，直播回复沿用当前会话配置的 AstrBot TTS。若已经安装了提供公开合成服务的插件，可以改为由该插件生成直播音频；例如接入 Voice Hub：
+
+```text
+live_tts_backend = auto
+live_tts_external_tool_name = voice_hub_speak
+live_tts_external_service_method = text_to_speech
+live_tts_external_plugin_name = astrbot_plugin_voice_hub
+```
+
+`registered_service` 只使用外部服务，找不到或合成失败时回复会退回纯文字；`auto` 会在外部服务不可用时回退 AstrBot TTS。注册工具名只用于找到所属插件，直播插件不会执行工具本身，因此不会触发工具自行发送 QQ 语音。
+
+若 Voice Hub 需要稳定的本地 WAV 输出以配合嘴型，可把服务方法改为：
+
+```text
+live_tts_external_service_method = render_pcm_wav
+```
+
 ### 5.1 AstrBot 和 OBS 不在同一台机器：让 TTS 从浏览器源出声
 
 `bili_live_tts_local_playback_enabled` 只在 AstrBot 所在机器播放音频。如果 AstrBot 跑在服务器、OBS 在直播机，改用网页播放：TTS 音频会推送到字幕 overlay 页面，由 OBS 浏览器源播放。
