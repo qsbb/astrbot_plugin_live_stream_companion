@@ -42,7 +42,7 @@ const LiveConfigForm = (() => {
     }
     if (type === "bool") {
       return `
-        <label class="field field-toggle" for="${escapeHtml(id)}">
+        <label class="field field-toggle" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
           <span>
             <b>${escapeHtml(label)}</b>
             ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
@@ -53,7 +53,7 @@ const LiveConfigForm = (() => {
     }
     if (type === "text") {
       return `
-        <label class="field field-wide" for="${escapeHtml(id)}">
+        <label class="field field-wide" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
           <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
           <textarea id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" rows="4">${escapeHtml(current)}</textarea>
         </label>
@@ -61,7 +61,7 @@ const LiveConfigForm = (() => {
     }
     if (options.length) {
       return `
-        <label class="field" for="${escapeHtml(id)}">
+        <label class="field" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
           <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
           <select id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}">
             ${options.map((item) => `<option value="${escapeHtml(item)}" ${String(current) === String(item) ? "selected" : ""}>${escapeHtml(optionLabelForKey(key, item))}</option>`).join("")}
@@ -72,7 +72,7 @@ const LiveConfigForm = (() => {
     if (isColorKey(key)) {
       const safeColor = /^#[0-9a-f]{6}$/i.test(String(current)) ? current : "#ffffff";
       return `
-        <label class="field" for="${escapeHtml(id)}">
+        <label class="field" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
           <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
           <input id="${escapeHtml(id)}" class="config-control color-control" name="${escapeHtml(key)}" type="color" value="${escapeHtml(safeColor)}">
         </label>
@@ -81,7 +81,7 @@ const LiveConfigForm = (() => {
     if (type === "int" || type === "float") {
       const step = slider.step ?? (type === "float" ? 0.1 : 1);
       return `
-        <label class="field" for="${escapeHtml(id)}">
+        <label class="field" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
           <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
           <input id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" type="number"
             value="${escapeHtml(current)}" step="${escapeHtml(step)}"
@@ -91,7 +91,7 @@ const LiveConfigForm = (() => {
       `;
     }
     return `
-      <label class="field" for="${escapeHtml(id)}">
+      <label class="field" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
         <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
         <input id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" type="text" value="${escapeHtml(current)}">
       </label>
@@ -136,6 +136,7 @@ const LiveConfigForm = (() => {
     const labels = {
       bilibili_type: { web: "Web 直播间", laplace: "Laplace 桥接", open_live: "B站开放平台" },
       bili_live_auto_reply_mode: { native: "AstrBot 原生流程", direct: "直接调用模型" },
+      live_tts_backend: { astrbot_provider: "AstrBot 会话 TTS", registered_service: "外部注册服务", auto: "外部优先，失败自动回退" },
       subtitle_scope: { bili_live: "仅 B站直播", twitch_live: "仅 Twitch 直播", live: "全部直播来源", all: "所有 Bot 回复" },
       subtitle_position: { bottom: "底部", center: "中部", top: "顶部" },
       mouth_sync_mode: { set: "覆盖参数", add: "叠加参数" },
