@@ -585,6 +585,7 @@ function renderConfig() {
   LiveConfigForm.renderGroups(els.configEditor, state.configGroups, state.configSchema, values, {
     includeGroup: (group) => group.id !== "subtitle",
   });
+  updateExternalTtsFields();
 
   els.configEditor.querySelectorAll(".config-control").forEach((control) => {
     control.addEventListener("input", () => {
@@ -593,8 +594,23 @@ function renderConfig() {
     });
     control.addEventListener("change", () => {
       state.configDirty = true;
+      if (control.name === "live_tts_backend") updateExternalTtsFields();
       updateDirtyState();
     });
+  });
+}
+
+function updateExternalTtsFields() {
+  const backend = els.configEditor?.querySelector('[name="live_tts_backend"]')?.value;
+  const showExternal = backend === "registered_service" || backend === "auto";
+  [
+    "live_tts_external_tool_name",
+    "live_tts_external_service_method",
+    "live_tts_external_plugin_name",
+    "live_tts_external_timeout_seconds",
+  ].forEach((key) => {
+    const field = els.configEditor?.querySelector(`[data-config-key="${key}"]`);
+    if (field) field.hidden = !showExternal;
   });
 }
 
