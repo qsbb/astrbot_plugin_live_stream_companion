@@ -180,12 +180,17 @@ class LiveStreamCompanionPageApi:
             logger.warning(f"[B站直播] 读取 LLM 工具管理器失败: {exc}")
             return self._error(f"读取工具管理器失败：{exc}")
         tools = list(getattr(manager, "func_list", []) or [])
-        services = build_external_tts_options(tools)
+        described = build_external_tts_options(tools)
+        services = [item for item in described if item.get("methods")]
+        others = [item for item in described if not item.get("methods")]
         config = getattr(self.plugin, "config", {}) or {}
         return self._ok(
             {
+                # services: 能取到公开合成方法的工具；tools: 其余已注册工具（供手动选择）
                 "services": services,
+                "tools": others,
                 "totalTools": len(tools),
+                "resolvedTools": sum(1 for item in described if item.get("has_plugin")),
                 "current": {
                     "tool": str(config.get("live_tts_external_tool_name", "") or ""),
                     "plugin": str(config.get("live_tts_external_plugin_name", "") or ""),

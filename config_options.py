@@ -46,10 +46,11 @@ MAX_SUBNET_HOSTS = 254
 
 
 def iter_handler_owners(handler: Any) -> list[Any]:
-    """沿 handler 的绑定对象 / 闭包 / 部分应用参数递归收集候选宿主对象。
+    """沿 handler 的绑定对象 / partial 参数 / 闭包 cell / 包装函数收集候选对象。
 
-    工具函数常见包装形式有 ``functools.partial``、装饰器闭包、绑定方法等，
-    顺着 ``__self__`` / ``args`` / ``func`` 走就能拿到插件实例。
+    工具函数常见包装形式有绑定方法、``functools.partial``、装饰器闭包（例如
+    ``@filter.llm_tool`` 在另一个函数里定义 ``async def tool(self, ...)``），
+    这些形式都要能顺着找到插件实例，否则就取不到插件的公开合成方法。
     """
     pending: list[Any] = [handler]
     visited: set[int] = set()
@@ -59,15 +60,33 @@ def iter_handler_owners(handler: Any) -> list[Any]:
         if current is None or id(current) in visited:
             continue
         visited.add(id(current))
+        owners.append(current)
         owner = getattr(current, "__self__", None)
         if owner is not None:
-            owners.append(owner)
             pending.append(owner)
         pending.extend(list(getattr(current, "args", ()) or ()))
         wrapped = getattr(current, "func", None)
         if wrapped is not None and wrapped is not current:
             pending.append(wrapped)
+        wrapped_chain = getattr(current, "__wrapped__", None)
+        if wrapped_chain is not None and wrapped_chain is not current:
+            pending.append(wrapped_chain)
+        for cell in getattr(current, "__closure__", None) or ():
+            try:
+                pending.append(cell.cell_contents)
+            except ValueError:
+                continue
     return owners
+
+
+def plugin_name_from_module_path(value: Any) -> str:
+    """从 ``handler_module_path`` / ``__module__`` 里提取 ``astrbot_plugin_xxx``。"""
+    text = str(value or "")
+    for part in text.split("."):
+        part = part.strip()
+        if part.startswith("astrbot_plugin_"):
+            return part
+    return ""
 
 
 def looks_like_plugin(obj: Any) -> bool:
@@ -147,15 +166,18 @@ def tts_service_methods(plugin: Any) -> list[str]:
 
 
 def describe_external_tts_tool(tool: Any) -> dict[str, Any] | None:
-    """把一个 LLM 工具描述成下拉选项；不是 TTS 服务就返回 None。"""
+    """把一个 LLM 工具描述成下拉选项（即使暂时取不到方法也保留，便于手动填写）。"""
     name = str(getattr(tool, "name", "") or getattr(tool, "func_name", "") or "").strip()
     if not name:
         return None
     plugin = tts_plugin_from_tool(tool)
     methods = tts_service_methods(plugin)
-    if not methods:
-        return None
-    identifiers = plugin_identifiers(plugin)
+    identifiers = set(plugin_identifiers(plugin)) if plugin is not None else set()
+    module_plugin = plugin_name_from_module_path(
+        getattr(tool, "handler_module_path", None)
+    ) or plugin_name_from_module_path(getattr(getattr(tool, "handler", None), "__module__", None))
+    if module_plugin:
+        identifiers.add(module_plugin)
     plugin_name = ""
     for candidate in sorted(identifiers):
         if candidate.startswith("astrbot_plugin_"):
@@ -165,11 +187,48 @@ def describe_external_tts_tool(tool: Any) -> dict[str, Any] | None:
         plugin_name = next(iter(sorted(identifiers)), "")
     description = str(getattr(tool, "description", "") or getattr(tool, "desc", "") or "").strip()
     label = plugin_display_name(plugin) or plugin_name or name
+    haystack = f"{name} {description}".lower()
+    looks_like_asr = any(
+        token in haystack
+        for token in (
+            "speech_to_text",
+            "voice_to_text",
+            "transcribe",
+            "transcription",
+            "recognition",
+            "asr",
+            "转写",
+            "语音转",
+            "转文本",
+        )
+    )
+    tts_like = bool(methods) or (
+        not looks_like_asr
+        and any(
+            token in haystack
+            for token in (
+                "tts",
+                "speak",
+                "speech",
+                "voice",
+                "audio",
+                "wav",
+                "pcm",
+                "语音",
+                "朗读",
+                "配音",
+                "发声",
+                "合成音",
+            )
+        )
+    )
     return {
         "tool": name,
         "plugin": plugin_name,
         "plugin_label": plugin_display_name(plugin),
         "methods": methods,
+        "tts_like": tts_like,
+        "has_plugin": bool(plugin is not None or plugin_name),
         "label": f"{label} · {name}" if label and label != name else name,
         "description": description[:200],
     }
@@ -188,7 +247,13 @@ def build_external_tts_options(tools: Iterable[Any]) -> list[dict[str, Any]]:
             continue
         seen.add(item["tool"])
         options.append(item)
-    options.sort(key=lambda item: (item.get("plugin_label") or "", item["tool"]))
+    options.sort(
+        key=lambda item: (
+            0 if item.get("methods") else (1 if item.get("tts_like") else 2),
+            item.get("plugin_label") or item.get("plugin") or "",
+            item["tool"],
+        )
+    )
     return options
 
 

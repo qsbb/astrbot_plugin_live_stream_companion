@@ -8,6 +8,8 @@ const state = {
   configFallback: false,
   dynamicOptions: {
     externalTts: [],
+    externalTtsAll: [],
+    ttsStats: null,
     ttsMethods: [],
     vtsCandidates: [],
     obsScenes: [],
@@ -652,9 +654,14 @@ function renderConfig() {
     : { ...state.configValues };
   LiveConfigForm.renderGroups(els.configEditor, state.configGroups, state.configSchema, values, {
     includeGroup: (group) => group.id !== "subtitle",
-    dynamic: state.dynamicOptions,
+    dynamic: { ...state.dynamicOptions, externalTts: ttsToolSource() },
   });
   updateExternalTtsFields();
+  setDynamicNote("live_tts_external_tool_name", ttsNoteText());
+  setDynamicNote(
+    "live_tts_external_service_method",
+    state.dynamicOptions.ttsMethods?.length ? `可用方法：${state.dynamicOptions.ttsMethods.join(" / ")}` : ""
+  );
 
   els.configEditor.querySelectorAll(".config-control").forEach((control) => {
     control.addEventListener("input", () => {
@@ -701,6 +708,12 @@ async function loadDynamicOptions(options = {}) {
     ]);
     if (tts) {
       state.dynamicOptions.externalTts = Array.isArray(tts.services) ? tts.services : [];
+      state.dynamicOptions.externalTtsAll = Array.isArray(tts.tools) ? tts.tools : [];
+      state.dynamicOptions.ttsStats = {
+        total: Number(tts.totalTools || 0),
+        resolved: Number(tts.resolvedTools || 0),
+        services: state.dynamicOptions.externalTts.length,
+      };
       loaded = true;
     }
     if (vts) {
@@ -726,12 +739,29 @@ function currentFieldValue(key) {
   return String(state.configValues?.[key] ?? "");
 }
 
+function ttsToolSource() {
+  const services = state.dynamicOptions.externalTts || [];
+  if (services.length) return services;
+  return state.dynamicOptions.externalTtsAll || [];
+}
+
 function syncTtsMethodChoices() {
   const tool = currentFieldValue("live_tts_external_tool_name") || state.configValues?.live_tts_external_tool_name || "";
-  const service = (state.dynamicOptions.externalTts || []).find((item) => item.tool === tool);
-  const methods = service?.methods?.length ? service.methods : ["text_to_speech", "render_pcm_wav"];
-  state.dynamicOptions.ttsMethods = methods;
+  const service = ttsToolSource().find((item) => item.tool === tool);
+  state.dynamicOptions.ttsMethods = service?.methods?.length ? service.methods : [];
   state.dynamicOptions.selectedTool = tool;
+}
+
+function ttsNoteText() {
+  const stats = state.dynamicOptions.ttsStats;
+  if (!stats) return "";
+  if (!stats.total) {
+    return "没有读取到已注册的 LLM 工具：先在插件里用 @llm_tool / filter.llm_tool 注册工具，再点「刷新列表」。";
+  }
+  if (!stats.services) {
+    return `已注册 ${stats.total} 个工具，但没有识别到带合成方法的服务；下拉里列出全部工具，方法名需要手动填写（也可参考插件文档）。`;
+  }
+  return `已注册 ${stats.total} 个工具，识别到 ${stats.services} 个可合成服务；选中后会自动列出可用方法。`;
 }
 
 function deriveScanSubnet() {
@@ -749,9 +779,7 @@ function applySelectedTtsTool(tool) {
   const service = (state.dynamicOptions.externalTts || []).find((item) => item.tool === tool);
   const pluginInput = els.configEditor?.querySelector('[name="live_tts_external_plugin_name"]');
   if (pluginInput && service?.plugin) pluginInput.value = service.plugin;
-  state.dynamicOptions.ttsMethods = service?.methods?.length
-    ? service.methods
-    : (state.dynamicOptions.ttsMethods || []);
+  state.dynamicOptions.ttsMethods = service?.methods?.length ? service.methods : [];
   state.dynamicOptions.selectedTool = tool;
 }
 
@@ -961,6 +989,12 @@ async function refreshExternalTtsOptions() {
   try {
     const data = await LivePageApi.get("/options/external-tts");
     state.dynamicOptions.externalTts = Array.isArray(data.services) ? data.services : [];
+    state.dynamicOptions.externalTtsAll = Array.isArray(data.tools) ? data.tools : [];
+    state.dynamicOptions.ttsStats = {
+      total: Number(data.totalTools || 0),
+      resolved: Number(data.resolvedTools || 0),
+      services: state.dynamicOptions.externalTts.length,
+    };
     syncTtsMethodChoices();
     showToast(state.dynamicOptions.externalTts.length
       ? `已加载 ${state.dynamicOptions.externalTts.length} 个外部 TTS 服务。`

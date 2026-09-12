@@ -119,10 +119,21 @@ const LiveConfigForm = (() => {
         </label>
       `;
     }
+    const fallbackActions = dynamicActionsForKey(key, dynamic);
+    const textInput = `<input id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" type="text" value="${escapeHtml(current)}">`;
+    if (fallbackActions) {
+      return `
+        <div class="field field-wide" data-config-key="${escapeHtml(key)}">
+          <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
+          <div class="field-actions">${textInput}${fallbackActions}</div>
+          <small class="field-note" data-config-note="${escapeHtml(key)}"></small>
+        </div>
+      `;
+    }
     return `
       <label class="field" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
         <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
-        <input id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" type="text" value="${escapeHtml(current)}">
+        ${textInput}
       </label>
     `;
   }

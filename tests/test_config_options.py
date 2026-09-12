@@ -14,6 +14,7 @@ try:  # AstrBot 运行环境（容器内 pytest / unittest）
         build_external_tts_options,
         build_probe_targets,
         candidate_label,
+        describe_external_tts_tool,
         derive_subnet_seeds,
         normalize_host_entries,
         plugin_display_name,
@@ -30,6 +31,7 @@ except ModuleNotFoundError:  # 本地直接跑单测：这些模块都不依赖 
         build_external_tts_options,
         build_probe_targets,
         candidate_label,
+        describe_external_tts_tool,
         derive_subnet_seeds,
         normalize_host_entries,
         plugin_display_name,
@@ -85,13 +87,54 @@ class ExternalTtsOptionTests(unittest.TestCase):
         self.assertEqual(item["methods"], ["render_pcm_wav", "text_to_speech"])
         self.assertIn("Voice Hub", item["label"])
 
-    def test_skips_non_tts_and_unresolvable_tools(self):
+    def test_keeps_tools_without_methods(self):
+        """取不到合成方法也要保留（供手动填写），但标记为非 tts_like。"""
         asr = _AsrOnlyPlugin()
         tools = [
-            _tool(asr.transcribe, name="asr_transcribe"),
-            _tool(lambda text: text, name="plain_lambda"),
+            _tool(asr.transcribe, name="asr_transcribe", description="把语音转成文本"),
+            _tool(lambda text: text, name="plain_tool", description="普通工具"),
         ]
-        self.assertEqual(build_external_tts_options(tools), [])
+        options = build_external_tts_options(tools)
+        by_tool = {item["tool"]: item for item in options}
+        self.assertEqual(len(options), 2)
+        self.assertEqual(by_tool["asr_transcribe"]["methods"], [])
+        self.assertFalse(by_tool["asr_transcribe"]["tts_like"])
+        self.assertFalse(by_tool["plain_tool"]["has_plugin"])
+
+    def test_resolves_plugin_from_closure_handler(self):
+        """voice_hub 风格的注册：工具定义在另一个函数里，靠闭包捕获插件实例。"""
+        plugin = _TtsPlugin()
+
+        def factory():
+            async def tool_handler(text: str = ""):
+                return await plugin.text_to_speech(text)
+
+            return tool_handler
+
+        handler = factory()
+        item = describe_external_tts_tool(_tool(handler, name="voice_hub_speak"))
+        self.assertIsNotNone(item)
+        self.assertEqual(item["plugin"], "astrbot_plugin_voice_hub")
+        self.assertIn("render_pcm_wav", item["methods"])
+        self.assertTrue(item["tts_like"])
+
+    def test_resolves_plugin_from_module_path(self):
+        """只有 handler_module_path 时也要能定位插件，并按名字判断像不像 TTS。"""
+        tool = _tool(lambda text: text, name="tts_speak", description="朗读文本")
+        tool.handler_module_path = "data.plugins.astrbot_plugin_my_voice.main"
+        item = describe_external_tts_tool(tool)
+        self.assertEqual(item["plugin"], "astrbot_plugin_my_voice")
+        self.assertEqual(item["methods"], [])
+        self.assertTrue(item["tts_like"])
+
+    def test_sorts_services_before_plain_tools(self):
+        plugin = _TtsPlugin()
+        tools = [
+            _tool(lambda text: text, name="plain_tool", description="普通工具"),
+            _tool(plugin.text_to_speech, name="voice_tool"),
+        ]
+        options = build_external_tts_options(tools)
+        self.assertEqual(options[0]["tool"], "voice_tool")
 
     def test_deduplicates_and_sorts(self):
         plugin = _TtsPlugin(display="Zeta", plugin_id="astrbot_plugin_zeta")
