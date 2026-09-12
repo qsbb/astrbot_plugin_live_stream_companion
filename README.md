@@ -63,6 +63,8 @@ B 站直播间事件 -> AstrBot 记忆/人格/工具链 -> 回复文本/语音
 ```
 
 4. VTube Studio 弹出授权窗口后点击允许。
+
+> 拓展页「直播面板」已内置 **VTS 地址下拉框**：点「扫描局域网」会并发探测当前网段上运行中的 VTube Studio（显示 `IP:端口 · VTS 版本`），选中候选后会自动带出端口；AstrBot 和 VTS 不在同一台机器时不用再手抄 IP。
 5. 检查连接：
 
 ```text
@@ -276,6 +278,8 @@ live_tts_external_plugin_name = astrbot_plugin_voice_hub
 ```
 
 `registered_service` 只使用外部服务，找不到或合成失败时回复会退回纯文字；`auto` 会在外部服务不可用时回退 AstrBot TTS。注册工具名只用于找到所属插件，直播插件不会执行工具本身，因此不会触发工具自行发送 QQ 语音。
+
+> 拓展页「直播面板 → 直播语音」里，外部 TTS 工具现在是**下拉选择**：点「刷新列表」重新扫描已注册工具，选中后自动带出所属插件名（`live_tts_external_plugin_name`）与可用方法；需要手填时选「自定义（手动填写）…」。
 
 若 Voice Hub 需要稳定的本地 WAV 输出以配合嘴型，可把服务方法改为：
 
