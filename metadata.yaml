@@ -4,7 +4,7 @@ author: menglimi
 author_url: https://github.com/menglimi
 description: astrbot_plugin_live_stream_companion 是面向 AstrBot 的直播陪伴插件，提供 B 站和 Twitch 直播弹幕读取、自动回应、可选 Soullink 连续情绪表演、VTube Studio 动作、OBS 字幕/开播控制、TTS 嘴型联动和直播记忆。
 desc: 为 AstrBot 提供 B 站/Twitch 弹幕、自动回应、Soullink 情绪表演、Live2D、OBS 字幕/开播控制、嘴型联动和直播记忆。
-repo: https://github.com/menglimi/astrbot_plugin_live_stream_companion
+repo: https://github.com/qsbb/astrbot_plugin_live_stream_companion
 category: 娱乐
 tags:
   - 直播
