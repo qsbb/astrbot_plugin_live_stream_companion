@@ -1970,3 +1970,71 @@ input[type="range"] {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* 演出层卡片的操作入口（配置 / 认证 / 测试） */
+.card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.card-actions .muted {
+  font-size: 12px;
+}
+
+/* OBS 动作分组：启动 / 控制 / 直播 */
+.obs-action-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.obs-action-group {
+  display: grid;
+  gap: 6px;
+}
+
+.obs-action-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.obs-action-group .obs-action-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.obs-action-group.is-danger {
+  border-left: 3px solid var(--danger);
+  padding-left: 10px;
+}
+
+/* 「去启用」这类内联按钮 */
+button.inline-link {
+  height: auto;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  font-weight: 650;
+}
+
+button.inline-link:hover {
+  background: none;
+  transform: none;
+}
+
+/* 配置分组跳转后的高亮 */
+.config-card.is-highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 117, 102, 0.16);
+  transition: box-shadow .3s var(--ease), border-color .3s var(--ease);
+}
+
+@media (max-width: 720px) {
+  .obs-action-group .obs-action-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

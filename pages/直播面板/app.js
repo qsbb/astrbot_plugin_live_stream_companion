@@ -10,8 +10,15 @@ const state = {
     externalTts: [],
     ttsMethods: [],
     vtsCandidates: [],
+    obsScenes: [],
     selectedTool: "",
     vtsScanning: false,
+    vtsTesting: false,
+    vtsAuthing: false,
+    vtsConnected: false,
+    vtsMessage: "",
+    hotkeysLoading: false,
+    scenesLoading: false,
     ttsRefreshing: false,
   },
   viewerFilter: "",
@@ -48,7 +55,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "memoryOverview", "memoryItems", "highlightItems", "topicItems", "threadItems",
     "summaryItems", "viewerFilter", "viewerRows", "eventCount", "eventRows",
     "configEditor", "saveConfigBtn", "resetConfigBtn", "configDirtyBadge",
-    "configStatus", "obsRefreshBtn", "obsControlPanel", "toast",
+    "configStatus", "obsRefreshBtn", "obsConfigBtn", "obsControlPanel", "stageActions", "toast",
     "soullinkSummary", "soullinkBadge", "soullinkStartBtn", "soullinkStopBtn",
     "soullinkResetBtn", "soullinkState", "soullinkEmotion", "soullinkVariant",
     "soullinkCharacterStage", "soullinkCharacterVisual", "soullinkRuntimeMetrics",
@@ -80,6 +87,15 @@ document.addEventListener("DOMContentLoaded", () => {
   els.startBtn?.addEventListener("click", () => startLive());
   els.stopBtn?.addEventListener("click", () => stopLive());
   els.obsRefreshBtn?.addEventListener("click", () => refreshObsControl());
+  els.obsConfigBtn?.addEventListener("click", () => jumpToConfigGroup("obs"));
+  els.stageActions?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-stage-action]") : null;
+    if (!button) return;
+    const action = button.dataset.stageAction;
+    if (action === "config") jumpToConfigGroup("connect");
+    else if (action === "auth") authenticateVts();
+    else if (action === "test") testVtsConnection();
+  });
   els.obsControlPanel?.addEventListener("click", handleObsControlClick);
   els.saveConfigBtn?.addEventListener("click", () => saveConfig());
   els.resetConfigBtn?.addEventListener("click", () => resetConfigForm());
@@ -159,8 +175,12 @@ function activateTab(tab) {
   if (tab === "memory" && !state.memory) {
     loadMemory();
   }
-  if (tab === "config" && !Object.keys(state.configSchema).length) {
-    loadConfig();
+  if (tab === "config") {
+    if (!Object.keys(state.configSchema).length) {
+      loadConfig();
+    } else {
+      renderConfig();
+    }
   }
   if (tab === "soullink") {
     loadSoullink();
@@ -306,6 +326,7 @@ function renderOverview() {
     `B站：${live.running ? `监听中（${live.room_id || "未配置房间"}）` : "未运行"}`,
     `Twitch：${twitch.connected ? `已连接（${twitch.channel || "未配置频道"}）` : (twitch.running ? "重连中" : "未运行")}`,
   ].join(" · ");
+  state.dynamicOptions.vtsConnected = Boolean(data.vts?.connected);
   els.liveBadge.textContent = anyRunning ? "监听中" : "未运行";
   els.liveBadge.className = `badge ${anyRunning ? "ok" : "idle"}`;
 
@@ -355,9 +376,23 @@ function renderOverview() {
     ["陪伴插件", companion.available ? "已连接" : "未找到"],
     ["LivingMemory", data.living_memory?.ready ? "已就绪" : (data.living_memory?.available ? "初始化中" : "未找到")],
   ]);
+  renderStageActions(data);
   renderObsControl(data.obs_control || {});
   renderTopViewers(data.live?.top_viewers || []);
   renderEvents();
+}
+
+function renderStageActions(data = {}) {
+  if (!els.stageActions) return;
+  const vtsConnected = Boolean(data.vts?.connected);
+  const vtsUrl = data.vts?.url || "未配置 VTS 地址";
+  els.stageActions.innerHTML = `
+    <span class="badge ${vtsConnected ? "ok" : "idle"}">${vtsConnected ? "VTS 已连接" : "VTS 未连接"}</span>
+    <button type="button" data-stage-action="config">配置 VTS / L2D</button>
+    <button type="button" data-stage-action="auth">认证 VTS</button>
+    <button type="button" data-stage-action="test">测试连接</button>
+    <small class="muted">${escapeHtml(vtsUrl)}</small>
+  `;
 }
 
 function renderOfflineShell(error) {
@@ -442,21 +477,45 @@ function renderObsControl(control) {
         </section>
       `).join("")}
     </div>
-    <div class="obs-action-grid">
-      <button type="button" data-obs-action="open_obs" ${actionDisabled || !obs.configured ? "disabled" : ""}>打开 OBS</button>
-      <button type="button" data-obs-action="open_l2dstudio" ${actionDisabled || !l2d.configured ? "disabled" : ""}>打开 L2DStudio</button>
-      <button type="button" data-obs-action="start_apps" ${actionDisabled ? "disabled" : ""}>打开两端</button>
-      <button type="button" data-obs-action="check" ${actionDisabled ? "disabled" : ""}>检查连接</button>
-      <button type="button" data-obs-action="debug" ${actionDisabled ? "disabled" : ""}>直播调试</button>
-      <button type="button" data-obs-action="switch_scene" ${obsActionDisabled || !settings.obs_live_scene_name ? "disabled" : ""}>切换场景</button>
-      <button type="button" data-obs-action="${obs.virtual_camera ? "stop_virtual_camera" : "start_virtual_camera"}" ${obsActionDisabled ? "disabled" : ""}>${obs.virtual_camera ? "关闭虚拟摄像机" : "开启虚拟摄像机"}</button>
-      <button type="button" data-obs-action="${obs.recording ? "stop_record" : "start_record"}" ${obsActionDisabled ? "disabled" : ""}>${obs.recording ? "停止录制" : "开始录制"}</button>
-      <button type="button" class="danger" data-obs-action="start_stream" ${streamDisabled || obs.streaming ? "disabled" : ""}>开始直播</button>
-      <button type="button" class="danger-outline" data-obs-action="stop_stream" ${obsActionDisabled || !obs.streaming ? "disabled" : ""}>停止直播</button>
+    <div class="obs-action-groups">
+      <div class="obs-action-group">
+        <span class="obs-action-label">启动</span>
+        <div class="obs-action-grid">
+          <button type="button" data-obs-action="open_obs" ${actionDisabled || !obs.configured ? "disabled" : ""}>打开 OBS</button>
+          <button type="button" data-obs-action="open_l2dstudio" ${actionDisabled || !l2d.configured ? "disabled" : ""}>打开 L2DStudio</button>
+          <button type="button" data-obs-action="start_apps" ${actionDisabled ? "disabled" : ""}>打开两端</button>
+          <button type="button" data-obs-action="check" ${actionDisabled ? "disabled" : ""}>检查连接</button>
+          <button type="button" data-obs-action="debug" ${actionDisabled ? "disabled" : ""}>直播调试</button>
+        </div>
+      </div>
+      <div class="obs-action-group">
+        <span class="obs-action-label">控制</span>
+        <div class="obs-action-grid">
+          <button type="button" data-obs-action="switch_scene" ${obsActionDisabled || !settings.obs_live_scene_name ? "disabled" : ""}>切换场景</button>
+          <button type="button" data-obs-action="${obs.virtual_camera ? "stop_virtual_camera" : "start_virtual_camera"}" ${obsActionDisabled ? "disabled" : ""}>${obs.virtual_camera ? "关闭虚拟摄像机" : "开启虚拟摄像机"}</button>
+          <button type="button" data-obs-action="${obs.recording ? "stop_record" : "start_record"}" ${obsActionDisabled ? "disabled" : ""}>${obs.recording ? "停止录制" : "开始录制"}</button>
+        </div>
+      </div>
+      <div class="obs-action-group is-danger">
+        <span class="obs-action-label">直播</span>
+        <div class="obs-action-grid">
+          <button type="button" class="danger" data-obs-action="start_stream" ${streamDisabled || obs.streaming ? "disabled" : ""}>开始直播</button>
+          <button type="button" class="danger-outline" data-obs-action="stop_stream" ${obsActionDisabled || !obs.streaming ? "disabled" : ""}>停止直播</button>
+        </div>
+      </div>
     </div>
-    <p class="muted obs-hint">开始直播会调用 OBS StartStream，要求配置页开启“允许插件开始推流”，并且需要二次点击确认。B 站推流侧建议先安装 obs-bilibili-stream。</p>
+    <p class="muted obs-hint">
+      ${enabled ? "" : '<button type="button" class="inline-link" data-jump-config="obs">去启用 OBS 开播控制</button> '}
+      开始直播会调用 OBS StartStream，要求配置页开启“允许插件开始推流”，并且需要二次点击确认。B 站推流侧建议先安装 obs-bilibili-stream。
+    </p>
   `;
 }
+
+document.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-jump-config]") : null;
+  if (!button) return;
+  jumpToConfigGroup(button.dataset.jumpConfig || "");
+});
 
 async function refreshObsControl() {
   try {
@@ -618,14 +677,27 @@ function renderConfig() {
   els.configEditor.querySelectorAll('[data-action="refresh-tts"]').forEach((button) => {
     button.addEventListener("click", refreshExternalTtsOptions);
   });
+  els.configEditor.querySelectorAll('[data-action="auth-vts"]').forEach((button) => {
+    button.addEventListener("click", authenticateVts);
+  });
+  els.configEditor.querySelectorAll('[data-action="test-vts"]').forEach((button) => {
+    button.addEventListener("click", testVtsConnection);
+  });
+  els.configEditor.querySelectorAll('[data-action="fetch-vts-hotkeys"]').forEach((button) => {
+    button.addEventListener("click", fetchVtsHotkeyTemplate);
+  });
+  els.configEditor.querySelectorAll('[data-action="refresh-obs-scenes"]').forEach((button) => {
+    button.addEventListener("click", refreshObsScenes);
+  });
 }
 
 async function loadDynamicOptions(options = {}) {
   let loaded = false;
   try {
-    const [tts, vts] = await Promise.all([
+    const [tts, vts, obs] = await Promise.all([
       LivePageApi.get("/options/external-tts").catch(() => null),
       LivePageApi.get("/options/vts-candidates").catch(() => null),
+      LivePageApi.get("/control/obs/scenes").catch(() => null),
     ]);
     if (tts) {
       state.dynamicOptions.externalTts = Array.isArray(tts.services) ? tts.services : [];
@@ -633,6 +705,10 @@ async function loadDynamicOptions(options = {}) {
     }
     if (vts) {
       state.dynamicOptions.vtsCandidates = Array.isArray(vts.candidates) ? vts.candidates : [];
+      loaded = true;
+    }
+    if (obs && Array.isArray(obs.scenes)) {
+      state.dynamicOptions.obsScenes = obs.scenes;
       loaded = true;
     }
     syncTtsMethodChoices();
@@ -717,6 +793,145 @@ function handleDynamicSelectChange(select) {
   }
   state.configDirty = true;
   updateDirtyState();
+}
+
+async function authenticateVts() {
+  state.dynamicOptions.vtsAuthing = true;
+  renderConfig();
+  try {
+    const data = await LivePageApi.post("/vts/auth", {});
+    state.dynamicOptions.vtsConnected = Boolean(data.connected);
+    state.dynamicOptions.vtsMessage = data.message || "";
+    showToast(data.message || (data.connected ? "VTS 认证成功。" : "VTS 认证未完成。"));
+    await loadAll();
+  } catch (error) {
+    showToast(error.message || String(error));
+  } finally {
+    state.dynamicOptions.vtsAuthing = false;
+    renderConfig();
+  }
+}
+
+function currentVtsTarget() {
+  const host = currentFieldValue("vts_host") || state.configValues?.vts_host || "";
+  const port = Number(currentFieldValue("vts_port") || state.configValues?.vts_port || 8001);
+  return { host: String(host).trim(), port: Number.isFinite(port) && port > 0 ? port : 8001 };
+}
+
+async function testVtsConnection() {
+  state.dynamicOptions.vtsTesting = true;
+  renderConfig();
+  try {
+    const target = currentVtsTarget();
+    const data = await LivePageApi.post("/vts/test", target);
+    state.dynamicOptions.vtsConnected = Boolean(data.connected);
+    state.dynamicOptions.vtsMessage = data.message || "";
+    if (target.host && data.reachable) {
+      const known = (state.dynamicOptions.vtsCandidates || []).some((item) => item.host === target.host);
+      if (!known) {
+        state.dynamicOptions.vtsCandidates = [
+          ...(state.dynamicOptions.vtsCandidates || []),
+          { host: target.host, port: target.port, version: data.version || "", label: `${target.host}:${target.port}${data.version ? ` · VTS ${data.version}` : ""}` },
+        ];
+      }
+    }
+    showToast(data.message || (data.connected ? "VTS 连接正常。" : "VTS 未连接。"));
+  } catch (error) {
+    showToast(error.message || String(error));
+  } finally {
+    state.dynamicOptions.vtsTesting = false;
+    renderConfig();
+  }
+}
+
+async function fetchVtsHotkeyTemplate() {
+  state.dynamicOptions.hotkeysLoading = true;
+  renderConfig();
+  try {
+    const data = await LivePageApi.get("/vts/hotkeys");
+    const hotkeys = Array.isArray(data.hotkeys) ? data.hotkeys : [];
+    if (!hotkeys.length) {
+      showToast("当前模型没有读到热键：先在 VTS 里为表情/动作设置热键。");
+      return;
+    }
+    const existing = parseHotkeyJson(currentFieldValue("l2d_hotkeys"));
+    const byHotkey = new Map(existing.map((item) => [String(item.hotkey_id || item.hotkeyID || ""), item]));
+    const merged = hotkeys.map((hotkey) => {
+      const id = String(hotkey.hotkeyID || hotkey.hotkeyId || "");
+      const name = String(hotkey.name || id);
+      const found = byHotkey.get(id);
+      return {
+        name: found?.name || name,
+        tag: found?.tag || sanitizeTag(name) || sanitizeTag(id),
+        enabled: found ? Boolean(found.enabled) : true,
+        hotkey_id: id,
+        description: found?.description || `触发热键「${name}」`,
+        duration: found?.duration ?? 0,
+        release_after_duration: found ? Boolean(found.release_after_duration) : false,
+      };
+    });
+    const textarea = els.configEditor?.querySelector('[name="l2d_hotkeys"]');
+    if (textarea) {
+      textarea.value = JSON.stringify(merged, null, 2);
+      state.configDirty = true;
+      updateDirtyState();
+    }
+    showToast(`已根据 VTS 热键生成 ${merged.length} 条映射，确认后保存。`);
+  } catch (error) {
+    showToast(error.message || String(error));
+  } finally {
+    state.dynamicOptions.hotkeysLoading = false;
+    renderConfig();
+  }
+}
+
+function parseHotkeyJson(text) {
+  try {
+    const parsed = JSON.parse(String(text || "").trim() || "[]");
+    if (Array.isArray(parsed)) return parsed.filter((item) => item && typeof item === "object");
+    if (parsed && typeof parsed === "object") return [parsed];
+  } catch (error) {
+    return [];
+  }
+  return [];
+}
+
+function sanitizeTag(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+async function refreshObsScenes() {
+  state.dynamicOptions.scenesLoading = true;
+  renderConfig();
+  try {
+    const data = await LivePageApi.get("/control/obs/scenes");
+    state.dynamicOptions.obsScenes = Array.isArray(data.scenes) ? data.scenes : [];
+    showToast(state.dynamicOptions.obsScenes.length
+      ? `已读取 ${state.dynamicOptions.obsScenes.length} 个 OBS 场景。`
+      : "没有读到 OBS 场景：确认 OBS 已启动、WebSocket 已开启并在配置里填好端口/密码。");
+  } catch (error) {
+    showToast(error.message || String(error));
+  } finally {
+    state.dynamicOptions.scenesLoading = false;
+    renderConfig();
+  }
+}
+
+function jumpToConfigGroup(groupId) {
+  activateTab("config");
+  if (!Object.keys(state.configSchema).length) loadConfig();
+  const target = () => document.getElementById(`config-group-${groupId}`);
+  const attempt = (retries) => {
+    const node = target();
+    if (node) {
+      node.scrollIntoView({ behavior: "smooth", block: "start" });
+      node.classList.add("is-highlight");
+      window.setTimeout(() => node.classList.remove("is-highlight"), 2400);
+      return;
+    }
+    if (retries > 0) window.setTimeout(() => attempt(retries - 1), 120);
+  };
+  window.setTimeout(() => attempt(6), 60);
 }
 
 async function scanVtsCandidates() {

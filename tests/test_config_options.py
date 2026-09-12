@@ -4,6 +4,11 @@
 import unittest
 from types import SimpleNamespace
 
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
 try:  # AstrBot 运行环境（容器内 pytest / unittest）
     from data.plugins.astrbot_plugin_live_stream_companion.config_options import (
         build_external_tts_options,
@@ -17,11 +22,10 @@ try:  # AstrBot 运行环境（容器内 pytest / unittest）
         subnet_hosts,
         tts_service_methods,
     )
-except ModuleNotFoundError:  # 本地直接跑单测：纯模块不依赖 AstrBot
-    import pathlib
-    import sys
-
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    from data.plugins.astrbot_plugin_live_stream_companion.page_config import (
+        PageConfigManager,
+    )
+except ModuleNotFoundError:  # 本地直接跑单测：这些模块都不依赖 AstrBot
     from config_options import (  # type: ignore[no-redef]
         build_external_tts_options,
         build_probe_targets,
@@ -34,6 +38,10 @@ except ModuleNotFoundError:  # 本地直接跑单测：纯模块不依赖 AstrBo
         subnet_hosts,
         tts_service_methods,
     )
+    from page_config import PageConfigManager  # type: ignore[no-redef]
+
+# unittest 需要能 import 到 tests 包（本地直接跑时补一次包路径）
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 
 class _TtsPlugin:
@@ -156,6 +164,63 @@ class VtsProbeTargetTests(unittest.TestCase):
     def test_candidate_label(self):
         self.assertEqual(candidate_label("192.168.5.55", 8001, "1.35.10"), "192.168.5.55:8001 · VTS 1.35.10")
         self.assertEqual(candidate_label("127.0.0.1", 8001), "127.0.0.1:8001")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class PageConfigManagerTests(unittest.TestCase):
+    """拓展页新增的 VTS / L2D 配置项与模板列表解析。"""
+
+    def test_vts_keys_are_editable_and_grouped(self):
+        keys = PageConfigManager.editable_keys()
+        for key in (
+            "vts_host",
+            "vts_port",
+            "auto_connect",
+            "auto_discover",
+            "show_status_on_mention",
+            "l2d_hotkeys",
+            "l2d_max_tags_per_reply",
+            "autonomous_l2d_enabled",
+            "l2dstudio_exe_path",
+        ):
+            self.assertIn(key, keys)
+        groups = {group["id"]: group for group in PageConfigManager.groups()}
+        self.assertIn("connect", groups)
+        connect_keys = groups["connect"]["keys"]
+        self.assertIn("vts_host", connect_keys)
+        self.assertIn("l2d_hotkeys", connect_keys)
+        # L2DStudio 路径从 OBS 组移到演出连接组，避免两处重复
+        self.assertIn("l2dstudio_exe_path", connect_keys)
+        self.assertNotIn("l2dstudio_exe_path", groups["obs"]["keys"])
+        self.assertLess(
+            list(groups).index("connect"), list(groups).index("live")
+        )
+
+    def test_template_list_accepts_json_and_dict(self):
+        items = PageConfigManager._coerce_template_list(
+            '[{"name": "开心", "hotkey_id": "Smile", "duration": 3}]'
+        )
+        self.assertEqual(items[0]["name"], "开心")
+        self.assertEqual(items[0]["tag"], "开心")
+        self.assertEqual(items[0]["hotkey_id"], "Smile")
+        self.assertEqual(items[0]["duration"], 3.0)
+        self.assertTrue(items[0]["enabled"])
+        single = PageConfigManager._coerce_template_list({"name": "难过", "tag": "sad"})
+        self.assertEqual(len(single), 1)
+        self.assertEqual(single[0]["tag"], "sad")
+        self.assertEqual(PageConfigManager._coerce_template_list(""), [])
+
+    def test_template_list_deduplicates_and_validates(self):
+        items = PageConfigManager._coerce_template_list(
+            '[{"tag": "a", "hotkey_id": "h1"}, {"tag": "a", "hotkey_id": "h2"}, {"not": "valid"}]'
+        )
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["hotkey_id"], "h1")
+        with self.assertRaises(ValueError):
+            PageConfigManager._coerce_template_list("{ not json }")
 
 
 if __name__ == "__main__":

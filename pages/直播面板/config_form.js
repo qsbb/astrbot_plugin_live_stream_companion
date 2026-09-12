@@ -9,12 +9,14 @@ const LiveConfigForm = (() => {
         const keys = (group.keys || []).filter((key) => includeKey(key, group));
         if (!keys.length) return "";
         return `
-          <article class="config-card" data-group="${escapeHtml(group.id)}">
+          <article class="config-card" data-group="${escapeHtml(group.id)}" id="config-group-${escapeHtml(group.id)}">
             <div class="config-card-head">
               <div>
                 <h2>${escapeHtml(group.title)}</h2>
                 <p>${escapeHtml(group.description || "")}</p>
               </div>
+            </div>
+              ${renderGroupActions(group, dynamic)}
             </div>
             <div class="field-grid">
               ${keys.map((key) => renderField(key, schema[key], values[key], dynamic)).join("")}
@@ -54,11 +56,23 @@ const LiveConfigForm = (() => {
         </label>
       `;
     }
-    if (type === "text") {
+    if (type === "text" || type === "template_list") {
+      const text = type === "template_list" ? formatTemplateList(current) : current;
+      const textarea = `<textarea id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" rows="${type === "template_list" ? 10 : 4}" spellcheck="false">${escapeHtml(text)}</textarea>`;
+      if (type === "template_list") {
+        return `
+          <div class="field field-wide" data-config-key="${escapeHtml(key)}">
+            <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
+            <div class="field-actions">${dynamicActionsForKey(key, dynamic)}</div>
+            ${textarea}
+            <small class="field-note" data-config-note="${escapeHtml(key)}">JSON 数组，每项：name / tag / hotkey_id / duration / description / enabled / release_after_duration</small>
+          </div>
+        `;
+      }
       return `
         <label class="field field-wide" data-config-key="${escapeHtml(key)}" for="${escapeHtml(id)}">
           <span><b>${escapeHtml(label)}</b>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>
-          <textarea id="${escapeHtml(id)}" class="config-control" name="${escapeHtml(key)}" rows="4">${escapeHtml(current)}</textarea>
+          ${textarea}
         </label>
       `;
     }
@@ -138,6 +152,7 @@ const LiveConfigForm = (() => {
     vts_host: "vtsCandidates",
     live_tts_external_tool_name: "externalTts",
     live_tts_external_service_method: "ttsMethods",
+    obs_live_scene_name: "obsScenes",
   };
 
   function buildChoices(key, staticOptions, dynamic, current) {
@@ -171,14 +186,64 @@ const LiveConfigForm = (() => {
 
   function dynamicActionsForKey(key, dynamic) {
     if (key === "vts_host") {
-      const label = dynamic.vtsScanning ? "扫描中…" : "扫描局域网";
-      return `<button type="button" data-action="scan-vts" ${dynamic.vtsScanning ? "disabled" : ""}>${label}</button>`;
+      const scanLabel = dynamic.vtsScanning ? "扫描中…" : "扫描局域网";
+      const testLabel = dynamic.vtsTesting ? "测试中…" : "测试连接";
+      return [
+        `<button type="button" data-action="scan-vts" ${dynamic.vtsScanning ? "disabled" : ""}>${scanLabel}</button>`,
+        `<button type="button" data-action="test-vts" ${dynamic.vtsTesting ? "disabled" : ""}>${testLabel}</button>`,
+      ].join("");
     }
     if (key === "live_tts_external_tool_name") {
       const label = dynamic.ttsRefreshing ? "刷新中…" : "刷新列表";
       return `<button type="button" data-action="refresh-tts" ${dynamic.ttsRefreshing ? "disabled" : ""}>${label}</button>`;
     }
+    if (key === "l2d_hotkeys") {
+      const label = dynamic.hotkeysLoading ? "读取中…" : "从 VTS 读取热键";
+      return `<button type="button" data-action="fetch-vts-hotkeys" ${dynamic.hotkeysLoading ? "disabled" : ""}>${label}</button>`;
+    }
+    if (key === "obs_live_scene_name") {
+      const label = dynamic.scenesLoading ? "读取中…" : "读取 OBS 场景";
+      return `<button type="button" data-action="refresh-obs-scenes" ${dynamic.scenesLoading ? "disabled" : ""}>${label}</button>`;
+    }
     return "";
+  }
+
+  function renderGroupActions(group, dynamic = {}) {
+    if (group.id === "connect") {
+      return `
+        <div class="config-actions">
+          <span class="badge ${dynamic.vtsConnected ? "ok" : "idle"}">${dynamic.vtsConnected ? "VTS 已连接" : "VTS 未连接"}</span>
+          <button type="button" data-action="auth-vts" ${dynamic.vtsAuthing ? "disabled" : ""}>${dynamic.vtsAuthing ? "认证中…" : "认证 VTS"}</button>
+          <button type="button" data-action="test-vts" ${dynamic.vtsTesting ? "disabled" : ""}>测试连接</button>
+        </div>
+      `;
+    }
+    if (group.id === "obs") {
+      return `
+        <div class="config-actions">
+          <button type="button" data-action="refresh-obs-scenes" ${dynamic.scenesLoading ? "disabled" : ""}>${dynamic.scenesLoading ? "读取中…" : "读取 OBS 场景"}</button>
+        </div>
+      `;
+    }
+    return "";
+  }
+
+  function formatTemplateList(value) {
+    if (value === undefined || value === null || value === "") return "[]";
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (!text) return "[]";
+      try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+      } catch (error) {
+        return value;
+      }
+    }
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (error) {
+      return String(value);
+    }
   }
 
   function methodLabel(value) {

@@ -48,6 +48,7 @@
           <article>
             <h2>演出层</h2>
             <div id="stagePanel" class="metric-list"></div>
+            <div id="stageActions" class="card-actions"></div>
           </article>
           <article class="wide">
             <h2>本场活跃观众</h2>
@@ -56,7 +57,10 @@
           <article class="wide">
             <div class="section-head">
               <h2>OBS 开播控制</h2>
-              <button id="obsRefreshBtn" type="button">刷新 OBS 状态</button>
+              <div class="config-actions">
+                <button id="obsConfigBtn" type="button">配置 OBS</button>
+                <button id="obsRefreshBtn" type="button">刷新 OBS 状态</button>
+              </div>
             </div>
             <div id="obsControlPanel" class="obs-control-panel"></div>
           </article>

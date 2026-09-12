@@ -49,6 +49,10 @@ class LiveStreamCompanionPageApi:
             ("/config/schema", self.get_config_schema, ["GET"], "Live Stream Companion config schema"),
             ("/options/external-tts", self.get_external_tts_options, ["GET"], "Live Stream Companion external TTS services"),
             ("/options/vts-candidates", self.get_vts_candidates, ["GET"], "Live Stream Companion VTS candidates"),
+            ("/vts/auth", self.vts_authenticate, ["POST"], "Live Stream Companion VTS authentication"),
+            ("/vts/test", self.vts_test, ["POST"], "Live Stream Companion VTS connection test"),
+            ("/vts/hotkeys", self.vts_hotkeys, ["GET"], "Live Stream Companion VTS hotkeys"),
+            ("/control/obs/scenes", self.obs_scenes, ["GET"], "Live Stream Companion OBS scenes"),
             ("/config/save", self.save_config, ["POST"], "Live Stream Companion save config"),
             ("/subtitle/preview", self.preview_subtitle, ["POST"], "Live Stream Companion subtitle preview"),
             ("/soullink/status", self.get_soullink_status, ["GET"], "Soullink Emotion status"),
@@ -64,6 +68,16 @@ class LiveStreamCompanionPageApi:
         ]
         for path, handler, methods, desc in routes:
             register(f"{PAGE_API_PREFIX}{path}", handler, methods, desc)
+
+    def _plugin_version(self) -> str:
+        """读取插件自身版本号（读不到时回退到 metadata.yaml 里的静态值）。"""
+        plugin = self.plugin
+        for source in (getattr(plugin, "metadata", None), getattr(plugin, "star_metadata", None)):
+            version = getattr(source, "version", "") if source is not None else ""
+            if version:
+                return str(version)
+        version = getattr(plugin, "version", "")
+        return str(version) if version else "1.8.2"
 
     async def get_overview(self) -> dict[str, Any]:
         try:
@@ -87,7 +101,7 @@ class LiveStreamCompanionPageApi:
                     "plugin": {
                         "name": PLUGIN_NAME,
                         "display_name": "我会直播圈米养你",
-                        "version": "1.8.1",
+                        "version": self._plugin_version(),
                     },
                     "live": self._live_summary(events, session_events),
                     "twitch": self._twitch_summary(twitch_events),
@@ -252,6 +266,132 @@ class LiveStreamCompanionPageApi:
                 },
             }
         )
+
+    async def vts_authenticate(self) -> dict[str, Any]:
+        """拓展页「认证 VTS」：与聊天命令 ``/vts_auth`` 等价的流程。"""
+        plugin = self.plugin
+        try:
+            token = await plugin.vts.request_auth_token()
+            ok = await plugin.vts.authenticate(token)
+            if ok:
+                await plugin._save_token(token)
+                plugin._connected = True
+                for step in (
+                    lambda: plugin._refresh_soullink_vts_input_catalog(),
+                    lambda: plugin._parameter_vts.reset_connection(),
+                ):
+                    try:
+                        await step()
+                    except Exception:
+                        pass
+            return self._ok(
+                {
+                    "connected": bool(ok),
+                    "url": str(getattr(plugin.vts, "url", "") or ""),
+                    "message": "VTube Studio 认证成功。"
+                    if ok
+                    else "认证未完成：请在 VTS 窗口点击【允许】后重试。",
+                }
+            )
+        except Exception as exc:
+            logger.warning(f"[B站直播] 拓展页 VTS 认证失败: {exc}")
+            return self._error(f"VTS 认证失败：{exc}")
+
+    async def vts_test(self) -> dict[str, Any]:
+        """拓展页「测试连接」：先探接口是否可达，再验证已保存的 Token 是否可用。"""
+        plugin = self.plugin
+        try:
+            payload = await request.get_json(silent=True) or {}
+        except Exception:
+            payload = {}
+        host = str(payload.get("host") or "").strip()
+        if host:
+            host = (normalize_host_entries(host) or [""])[0]
+        port = self._int(payload.get("port"), 0) or 0
+        configured_host = str(plugin.config.get("vts_host", "") or "").strip()
+        configured_port = self._int(plugin.config.get("vts_port"), 8001) or 8001
+        probe_host = host or configured_host or "127.0.0.1"
+        probe_port = port or configured_port
+        from .vts_discovery import probe_vts
+
+        version = await probe_vts(probe_host, probe_port, timeout=2.0)
+        if version is None:
+            return self._ok(
+                {
+                    "connected": False,
+                    "reachable": False,
+                    "url": f"ws://{probe_host}:{probe_port}",
+                    "message": f"连不上 {probe_host}:{probe_port}：确认 VTS 已启动、插件 API 已开启（默认 8001）、地址填写正确。",
+                }
+            )
+        same_target = (probe_host == (configured_host or "127.0.0.1")) and (probe_port == configured_port)
+        if not same_target:
+            return self._ok(
+                {
+                    "connected": None,
+                    "reachable": True,
+                    "url": f"ws://{probe_host}:{probe_port}",
+                    "version": version,
+                    "message": f"接口可达：VTS {version}。保存配置后即可用它连接。",
+                }
+            )
+        authenticated = await plugin._check_and_reconnect()
+        model: dict[str, Any] = {}
+        if authenticated:
+            try:
+                model = await plugin.vts.get_model_info()
+            except Exception:
+                model = {}
+        return self._ok(
+            {
+                "connected": bool(authenticated),
+                "reachable": True,
+                "url": str(getattr(plugin.vts, "url", "") or f"ws://{probe_host}:{probe_port}"),
+                "version": version,
+                "model": model,
+                "message": f"VTS {version} 已连接，模型：{model.get('modelName') or '未加载'}"
+                if authenticated
+                else f"VTS {version} 接口可达，但尚未认证：点「认证 VTS」并在 VTS 窗口允许。",
+            }
+        )
+
+    async def vts_hotkeys(self) -> dict[str, Any]:
+        """列出当前 VTS 模型的热键与表情，供拓展页编辑 ``l2d_hotkeys``。"""
+        plugin = self.plugin
+        if not await plugin._check_and_reconnect():
+            return self._error("未连接到 VTube Studio，请先在「演出连接」里认证 VTS。")
+        try:
+            hotkeys = await plugin.vts.get_hotkeys()
+            expressions = await plugin.vts.get_expressions()
+        except Exception as exc:
+            logger.warning(f"[B站直播] 拓展页读取 VTS 热键失败: {exc}")
+            return self._error(f"读取 VTS 热键失败：{exc}")
+        return self._ok(
+            {
+                "hotkeys": list(hotkeys or []),
+                "expressions": list(expressions or []),
+                "url": str(getattr(plugin.vts, "url", "") or ""),
+            }
+        )
+
+    async def obs_scenes(self) -> dict[str, Any]:
+        """读取 OBS 场景列表，供拓展页把 ``obs_live_scene_name`` 变成下拉。"""
+        try:
+            payload = await self._obs_request("GetSceneList")
+        except Exception as exc:
+            return self._error(f"读取 OBS 场景失败：{exc}")
+        scenes: list[str] = []
+        raw_scenes = payload.get("scenes") if isinstance(payload, dict) else None
+        if isinstance(raw_scenes, list):
+            for item in raw_scenes:
+                name = item.get("sceneName") if isinstance(item, dict) else item
+                name = self._single_line(name, 120)
+                if name:
+                    scenes.append(name)
+        current = self._single_line(
+            payload.get("currentProgramSceneName") if isinstance(payload, dict) else "", 120
+        )
+        return self._ok({"scenes": scenes, "current": current, "connected": True})
 
     async def preview_subtitle(self) -> dict[str, Any]:
         try:

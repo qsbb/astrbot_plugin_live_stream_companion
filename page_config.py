@@ -173,6 +173,16 @@ class PageConfigManager:
     @staticmethod
     def editable_keys() -> list[str]:
         return [
+            # 演出连接（VTS / L2DStudio）
+            "vts_host",
+            "vts_port",
+            "auto_connect",
+            "auto_discover",
+            "show_status_on_mention",
+            "l2d_hotkeys",
+            "l2d_max_tags_per_reply",
+            "autonomous_l2d_enabled",
+            "l2dstudio_exe_path",
             "bilibili_enabled",
             "bilibili_type",
             "bilibili_room_id",
@@ -320,6 +330,22 @@ class PageConfigManager:
     def groups() -> list[dict[str, Any]]:
         return [
             {
+                "id": "connect",
+                "title": "演出连接（VTS / L2DStudio）",
+                "description": "连接 VTube Studio、认证、热键表情映射与 L2DStudio 启动路径。",
+                "keys": [
+                    "vts_host",
+                    "vts_port",
+                    "auto_connect",
+                    "auto_discover",
+                    "show_status_on_mention",
+                    "l2d_hotkeys",
+                    "l2d_max_tags_per_reply",
+                    "autonomous_l2d_enabled",
+                    "l2dstudio_exe_path",
+                ],
+            },
+            {
                 "id": "live",
                 "title": "直播监听",
                 "description": "房间、后端和事件缓存。",
@@ -370,7 +396,6 @@ class PageConfigManager:
                 "keys": [
                     "obs_control_enabled",
                     "obs_exe_path",
-                    "l2dstudio_exe_path",
                     "obs_ws_host",
                     "obs_ws_port",
                     "obs_ws_password",
@@ -537,7 +562,57 @@ class PageConfigManager:
             return [item.strip() for item in str(value or "").split(",") if item.strip()]
         if value_type == "text":
             return str(value or "")
+        if value_type == "template_list":
+            return PageConfigManager._coerce_template_list(value)
         return str(value or "")
+
+    @staticmethod
+    def _coerce_template_list(value: Any) -> list[dict[str, Any]]:
+        """把拓展页提交的 JSON（字符串或列表）规范成模板列表。
+
+        目前用于 ``l2d_hotkeys``：每项 = name/tag/enabled/hotkey_id/description/
+        duration/release_after_duration。解析失败会抛 ``ValueError``，由拓展页把
+        错误原样显示给用户。"""
+        data: Any = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"l2d_hotkeys JSON 解析失败：{exc.msg} (行 {exc.lineno})") from exc
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            raise ValueError("l2d_hotkeys 需要 JSON 数组或对象")
+        items: list[dict[str, Any]] = []
+        seen_tags: set[str] = set()
+        for raw in data:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name", "") or "").strip()
+            tag = str(raw.get("tag", "") or "").strip() or name
+            hotkey_id = str(raw.get("hotkey_id") or raw.get("hotkeyID") or "").strip()
+            if not (name or tag or hotkey_id):
+                continue
+            if tag and tag in seen_tags:
+                continue
+            seen_tags.add(tag)
+            items.append(
+                {
+                    "name": name or tag or hotkey_id,
+                    "tag": tag or name or hotkey_id,
+                    "enabled": bool(raw.get("enabled", True)),
+                    "hotkey_id": hotkey_id,
+                    "description": str(raw.get("description", "") or ""),
+                    "duration": round(
+                        max(0.0, PageConfigManager._float(raw.get("duration"), 0.0)), 2
+                    ),
+                    "release_after_duration": bool(raw.get("release_after_duration", True)),
+                }
+            )
+        return items
 
     @staticmethod
     def _int(value: Any, default: int = 0) -> int:
