@@ -6,6 +6,14 @@ const state = {
   configValues: {},
   configDirty: false,
   configFallback: false,
+  dynamicOptions: {
+    externalTts: [],
+    ttsMethods: [],
+    vtsCandidates: [],
+    selectedTool: "",
+    vtsScanning: false,
+    ttsRefreshing: false,
+  },
   viewerFilter: "",
   soullink: null,
   soullinkEmotion: "happy",
@@ -164,6 +172,7 @@ async function loadAll() {
     const [overview] = await Promise.all([
       LivePageApi.get("/overview"),
       loadConfig({ silent: true }),
+      loadDynamicOptions({ silent: true }),
     ]);
     state.overview = overview;
     renderOverview();
@@ -584,6 +593,7 @@ function renderConfig() {
     : { ...state.configValues };
   LiveConfigForm.renderGroups(els.configEditor, state.configGroups, state.configSchema, values, {
     includeGroup: (group) => group.id !== "subtitle",
+    dynamic: state.dynamicOptions,
   });
   updateExternalTtsFields();
 
@@ -598,6 +608,154 @@ function renderConfig() {
       updateDirtyState();
     });
   });
+
+  els.configEditor.querySelectorAll('select[data-dynamic-select="1"]').forEach((select) => {
+    select.addEventListener("change", () => handleDynamicSelectChange(select));
+  });
+  els.configEditor.querySelectorAll('[data-action="scan-vts"]').forEach((button) => {
+    button.addEventListener("click", scanVtsCandidates);
+  });
+  els.configEditor.querySelectorAll('[data-action="refresh-tts"]').forEach((button) => {
+    button.addEventListener("click", refreshExternalTtsOptions);
+  });
+}
+
+async function loadDynamicOptions(options = {}) {
+  let loaded = false;
+  try {
+    const [tts, vts] = await Promise.all([
+      LivePageApi.get("/options/external-tts").catch(() => null),
+      LivePageApi.get("/options/vts-candidates").catch(() => null),
+    ]);
+    if (tts) {
+      state.dynamicOptions.externalTts = Array.isArray(tts.services) ? tts.services : [];
+      loaded = true;
+    }
+    if (vts) {
+      state.dynamicOptions.vtsCandidates = Array.isArray(vts.candidates) ? vts.candidates : [];
+      loaded = true;
+    }
+    syncTtsMethodChoices();
+    if (loaded && Object.keys(state.configSchema).length) renderConfig();
+    return loaded;
+  } catch (error) {
+    if (!options.silent) showToast(error.message || String(error));
+    return false;
+  }
+}
+
+function currentFieldValue(key) {
+  const control = els.configEditor?.querySelector(`[name="${key}"]`);
+  if (control && typeof control.value === "string") return control.value;
+  return String(state.configValues?.[key] ?? "");
+}
+
+function syncTtsMethodChoices() {
+  const tool = currentFieldValue("live_tts_external_tool_name") || state.configValues?.live_tts_external_tool_name || "";
+  const service = (state.dynamicOptions.externalTts || []).find((item) => item.tool === tool);
+  const methods = service?.methods?.length ? service.methods : ["text_to_speech", "render_pcm_wav"];
+  state.dynamicOptions.ttsMethods = methods;
+  state.dynamicOptions.selectedTool = tool;
+}
+
+function deriveScanSubnet() {
+  const host = String(window.location.hostname || "");
+  const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return "";
+  const octets = match.slice(1, 5).map((part) => Number(part));
+  if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return "";
+  const [a, b, c] = octets;
+  const isPrivate = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return isPrivate ? `${a}.${b}.${c}.0/24` : "";
+}
+
+function applySelectedTtsTool(tool) {
+  const service = (state.dynamicOptions.externalTts || []).find((item) => item.tool === tool);
+  const pluginInput = els.configEditor?.querySelector('[name="live_tts_external_plugin_name"]');
+  if (pluginInput && service?.plugin) pluginInput.value = service.plugin;
+  state.dynamicOptions.ttsMethods = service?.methods?.length
+    ? service.methods
+    : (state.dynamicOptions.ttsMethods || []);
+  state.dynamicOptions.selectedTool = tool;
+}
+
+function applySelectedVtsHost(host) {
+  const candidate = (state.dynamicOptions.vtsCandidates || []).find((item) => item.host === host);
+  if (!candidate) return;
+  const portInput = els.configEditor?.querySelector('[name="vts_port"]');
+  if (portInput && candidate.port) portInput.value = String(candidate.port);
+}
+
+function setDynamicNote(key, text) {
+  const note = els.configEditor?.querySelector(`[data-config-note="${key}"]`);
+  if (note) note.textContent = text || "";
+}
+
+function handleDynamicSelectChange(select) {
+  const key = select.name;
+  if (select.value === "__custom__") {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "config-control";
+    input.id = select.id;
+    input.name = key;
+    input.value = "";
+    input.placeholder = "手动填写，例如 192.168.5.55 或 voice_hub_speak";
+    select.replaceWith(input);
+    input.focus();
+    state.configDirty = true;
+    updateDirtyState();
+    return;
+  }
+  if (key === "live_tts_external_tool_name") {
+    applySelectedTtsTool(select.value);
+    const service = (state.dynamicOptions.externalTts || []).find((item) => item.tool === select.value);
+    renderConfig();
+    setDynamicNote("live_tts_external_tool_name", service ? `可用方法：${(service.methods || []).join(" / ")}` : "");
+  } else if (key === "vts_host") {
+    applySelectedVtsHost(select.value);
+  }
+  state.configDirty = true;
+  updateDirtyState();
+}
+
+async function scanVtsCandidates() {
+  state.dynamicOptions.vtsScanning = true;
+  renderConfig();
+  try {
+    const subnet = deriveScanSubnet();
+    const query = subnet ? `?mode=scan&subnet=${encodeURIComponent(subnet)}` : "?mode=scan";
+    const data = await LivePageApi.get(`/options/vts-candidates${query}`);
+    state.dynamicOptions.vtsCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+    const count = state.dynamicOptions.vtsCandidates.length;
+    const scanned = data.scanned || {};
+    showToast(count
+      ? `发现 ${count} 个 VTS（已扫描 ${scanned.hosts || 0} 个地址）。`
+      : `未发现 VTS，已扫描 ${scanned.hosts || 0} 个地址；可在网段输入框里手动指定。`);
+  } catch (error) {
+    showToast(error.message || String(error));
+  } finally {
+    state.dynamicOptions.vtsScanning = false;
+    renderConfig();
+  }
+}
+
+async function refreshExternalTtsOptions() {
+  state.dynamicOptions.ttsRefreshing = true;
+  renderConfig();
+  try {
+    const data = await LivePageApi.get("/options/external-tts");
+    state.dynamicOptions.externalTts = Array.isArray(data.services) ? data.services : [];
+    syncTtsMethodChoices();
+    showToast(state.dynamicOptions.externalTts.length
+      ? `已加载 ${state.dynamicOptions.externalTts.length} 个外部 TTS 服务。`
+      : "没有检测到带公开合成方法的外部 TTS 服务。");
+  } catch (error) {
+    showToast(error.message || String(error));
+  } finally {
+    state.dynamicOptions.ttsRefreshing = false;
+    renderConfig();
+  }
 }
 
 function updateExternalTtsFields() {
