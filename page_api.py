@@ -183,6 +183,20 @@ class LiveStreamCompanionPageApi:
         described = build_external_tts_options(tools)
         services = [item for item in described if item.get("methods")]
         others = [item for item in described if not item.get("methods")]
+        if not tools:
+            logger.info("[B站直播] 外部 TTS 工具清单：LLM 工具管理器里目前没有已注册工具。")
+        elif not services:
+            logger.info(
+                "[B站直播] 外部 TTS 工具清单：已注册 %d 个工具，但没有识别到带公开合成方法的服务（已回退列出全部工具）。",
+                len(tools),
+            )
+        else:
+            logger.info(
+                "[B站直播] 外部 TTS 工具清单：已注册 %d 个工具，识别到 %d 个合成服务：%s",
+                len(tools),
+                len(services),
+                ", ".join(item["tool"] for item in services[:5]),
+            )
         config = getattr(self.plugin, "config", {}) or {}
         return self._ok(
             {
