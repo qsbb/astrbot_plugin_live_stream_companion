@@ -1,0 +1,259 @@
+/* 拓展页「语音诊断 / 生成试听」卡片 */
+
+.diag-card {
+  display: grid;
+  gap: 12px;
+}
+
+.diag-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.diag-chipline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.diag-chipline .label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.diag-chip {
+  height: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+}
+
+.diag-switchline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.diag-switchline label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.diag-switchline input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.diag-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--blue-soft);
+  color: #24405e;
+  font-size: 13px;
+}
+
+.diag-progress .spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(64, 111, 159, 0.3);
+  border-top-color: var(--blue);
+  animation: diag-spin 0.8s linear infinite;
+}
+
+@keyframes diag-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.diag-result {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: linear-gradient(180deg, var(--accent-soft), var(--surface) 42%);
+}
+
+.diag-result.is-error {
+  background: linear-gradient(180deg, var(--gold-soft), var(--surface) 42%);
+}
+
+.diag-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diag-result-head b {
+  font-size: 14px;
+}
+
+.diag-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.diag-summary b {
+  color: var(--ink);
+}
+
+.diag-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.diag-play {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  font-size: 15px;
+}
+
+.diag-play[disabled] {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.diag-wave {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 40px;
+}
+
+.diag-wave i {
+  flex: 1 1 auto;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.32;
+  transition: opacity 0.2s var(--ease);
+}
+
+.diag-wave i.played {
+  opacity: 1;
+}
+
+.diag-timer {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diag-grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.diag-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.diag-item small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.diag-item b {
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.diag-item code {
+  font-size: 12px;
+  background: var(--surface-strong);
+  padding: 2px 6px;
+  border-radius: 6px;
+  word-break: break-all;
+}
+
+.diag-item.tone-ok {
+  border-left: 3px solid var(--accent);
+}
+
+.diag-item.tone-warn {
+  border-left: 3px solid var(--gold);
+}
+
+.diag-checks {
+  display: grid;
+  gap: 6px;
+}
+
+.diag-check {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.diag-check .mark {
+  width: 16px;
+  flex: 0 0 16px;
+  text-align: center;
+  font-weight: 800;
+}
+
+.diag-check.ok .mark {
+  color: var(--accent-strong);
+}
+
+.diag-check.warn .mark {
+  color: var(--gold);
+}
+
+.diag-check small {
+  color: var(--muted);
+}
+
+.diag-tip {
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .diag-grid2 {
+    grid-template-columns: 1fr;
+  }
+}

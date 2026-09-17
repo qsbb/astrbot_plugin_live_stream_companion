@@ -279,7 +279,6 @@ const LiveConfigForm = (() => {
       bilibili_type: { web: "Web 直播间", laplace: "Laplace 桥接", open_live: "B站开放平台" },
       bili_live_auto_reply_mode: { native: "AstrBot 原生流程", direct: "直接调用模型" },
       live_tts_backend: { astrbot_provider: "AstrBot 会话 TTS", registered_service: "外部注册服务", auto: "外部优先，失败自动回退" },
-      live_tts_external_service_method: { text_to_speech: "text_to_speech（直接返回音频路径）", render_pcm_wav: "render_pcm_wav（生成本地 WAV，可同步嘴型）" },
       subtitle_scope: { bili_live: "仅 B站直播", twitch_live: "仅 Twitch 直播", live: "全部直播来源", all: "所有 Bot 回复" },
       subtitle_position: { bottom: "底部", center: "中部", top: "顶部" },
       mouth_sync_mode: { set: "覆盖参数", add: "叠加参数" },

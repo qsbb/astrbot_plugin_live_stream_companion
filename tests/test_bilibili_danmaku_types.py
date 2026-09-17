@@ -215,12 +215,12 @@ class AutoReplyRichDanmakuTests(unittest.TestCase):
         updates = manager.build_updates(
             {
                 "live_tts_backend": "auto",
-                "live_tts_external_tool_name": "voice_hub_speak",
+                "live_tts_external_tool_name": "demo_tts_tool",
                 "live_tts_external_timeout_seconds": "75",
             }
         )
         self.assertEqual(updates["live_tts_backend"], "auto")
-        self.assertEqual(updates["live_tts_external_tool_name"], "voice_hub_speak")
+        self.assertEqual(updates["live_tts_external_tool_name"], "demo_tts_tool")
         self.assertEqual(updates["live_tts_external_timeout_seconds"], 75)
 
 

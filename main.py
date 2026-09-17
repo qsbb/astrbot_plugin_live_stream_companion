@@ -39,6 +39,12 @@ from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
+from .audio_diagnose import (
+    build_diagnose_checks,
+    empty_audio_info,
+    inline_audio_data_url,
+    probe_audio_file,
+)
 from .vts_client import (
     VTSClient,
     VTSClientError,
@@ -2541,30 +2547,47 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         *,
         push_subtitle: bool = True,
         schedule_local_playback: bool = True,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
+        """生成直播 TTS。
+
+        ``dry_run=True`` 时只跑「文本转换 → 合成」并返回链路信息：不建消息链、
+        不推字幕、不启动嘴型任务、不写记忆，供拓展页「语音诊断」复用同一条链路。
+        """
+
+        def _fail(reason: str) -> dict[str, Any]:
+            if dry_run:
+                return {"dry_run": True, "error": reason}
+            return {}
+
         spoken = self._strip_tts_blocks_from_text(text)
         if not spoken:
-            return {}
+            return _fail("没有可合成的文本（清洗后为空）")
         backend = self._live_tts_backend()
         tts_service: Any | None = None
         backend_label = "AstrBot Provider"
+        external_resolved = False
+        external_error = ""
+        fallback_used = False
         if backend in {"registered_service", "auto"}:
             tts_service = self._find_live_tts_registered_service()
             if tts_service is not None:
                 backend_label = "已注册外部服务"
+                external_resolved = True
             elif backend == "registered_service":
+                external_error = "未找到已配置的外部 TTS 服务"
                 logger.warning("[B站直播] 直播自动回应 TTS 生成失败：未找到已配置的外部 TTS 服务")
-                return {}
+                return _fail(external_error)
         if tts_service is None:
             tts_service = self._get_live_tts_provider(session_id)
             if tts_service is None:
-                return {}
+                return _fail("当前会话没有可用的 TTS Provider")
         convert_started_at = time.perf_counter()
         spoken = await self._convert_bili_live_tts_spoken_text(session_id, spoken, tts_service)
         spoken = self._sanitize_bili_live_tts_spoken_text(spoken, source_text=text)
         convert_elapsed = time.perf_counter() - convert_started_at
         if not spoken:
-            return {}
+            return _fail("文本转换后没有可合成的内容")
         try:
             tts_started_at = time.perf_counter()
             if backend_label == "已注册外部服务":
@@ -2573,10 +2596,12 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 )
                 if not audio_path and backend == "auto":
                     logger.warning("[B站直播] 外部 TTS 服务未生成音频，回退 AstrBot TTS Provider")
+                    external_error = "外部服务没有返回音频路径"
                     tts_service = self._get_live_tts_provider(session_id)
                     if tts_service is None:
-                        return {}
+                        return _fail("外部 TTS 服务未生成音频，且当前会话没有可用的 TTS Provider")
                     backend_label = "AstrBot Provider（外部回退）"
+                    fallback_used = True
                     audio_path = await tts_service.get_audio(spoken)
             else:
                 audio_path = await tts_service.get_audio(spoken)
@@ -2584,24 +2609,49 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         except Exception as e:
             if backend_label == "已注册外部服务" and backend == "auto":
                 logger.warning("[B站直播] 外部 TTS 服务生成失败，回退 AstrBot TTS Provider: %s", e)
+                external_error = str(e)
                 provider = self._get_live_tts_provider(session_id)
                 if provider is None:
-                    return {}
+                    return _fail(f"外部 TTS 服务生成失败（{e}），且当前会话没有可用的 TTS Provider")
                 try:
                     tts_started_at = time.perf_counter()
                     audio_path = await provider.get_audio(spoken)
                     tts_elapsed = time.perf_counter() - tts_started_at
                     backend_label = "AstrBot Provider（外部回退）"
+                    fallback_used = True
                 except Exception as fallback_error:
                     logger.warning("[B站直播] 直播自动回应 TTS 回退生成失败: %s", fallback_error)
-                    return {}
+                    return _fail(f"外部 TTS 服务生成失败（{e}），回退会话 TTS 也失败：{fallback_error}")
             else:
                 logger.warning("[B站直播] 直播自动回应 TTS 生成失败: %s", e)
-                return {}
+                return _fail(str(e) or "TTS 合成失败")
         if not audio_path:
             logger.warning("[B站直播] 直播自动回应 TTS 生成失败：%s 未返回音频路径", backend_label)
-            return {}
+            return _fail(f"{backend_label} 未返回音频路径")
         audio_path = str(audio_path)
+        if dry_run:
+            logger.info(
+                "[B站直播] 语音诊断合成完成: backend=%s convert=%.2fs synthesize=%.2fs path=%s",
+                backend_label,
+                convert_elapsed,
+                tts_elapsed,
+                audio_path,
+            )
+            return {
+                "dry_run": True,
+                "chain": [],
+                "spoken_text": spoken,
+                "subtitle_text": spoken,
+                "audio_path": audio_path,
+                "source_audio_path": audio_path,
+                "backend": backend,
+                "backend_label": backend_label,
+                "external_resolved": external_resolved,
+                "external_error": external_error,
+                "fallback_used": fallback_used,
+                "convert_elapsed": convert_elapsed,
+                "tts_elapsed": tts_elapsed,
+            }
         record_audio_path = self._prepare_bili_live_audio_for_record(audio_path)
         try:
             record = Record(file=record_audio_path, url=record_audio_path)
@@ -2644,6 +2694,115 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
             "subtitle_text": subtitle_text,
             "audio_path": record_audio_path,
             "source_audio_path": audio_path,
+        }
+
+    async def _diagnose_live_tts_audio(
+        self,
+        text: str,
+        *,
+        push_overlay: bool = False,
+        local_play: bool = False,
+    ) -> dict[str, Any]:
+        """按真实直播链路合成一次语音，供拓展页「语音诊断 / 生成试听」使用。
+
+        只做「文本转换 → 合成 → 读取音频参数」，不会发送消息、不会写入直播记忆、
+        不会占用自动回应限流；需要时可选推送 overlay 或本机播放一次。
+        """
+        started_at = time.perf_counter()
+        original_text = str(text or "").strip()[:500]
+        session_id = ""
+        try:
+            session_id = await self._get_bili_reply_session()
+        except Exception as exc:
+            logger.debug("[B站直播] 语音诊断读取绑定会话失败: %s", exc)
+        if not session_id:
+            session_id = "live_stream_companion_diagnose"
+        backend = self._live_tts_backend()
+        tool_name = str(self.config.get("live_tts_external_tool_name", "") or "").strip()
+        plugin_name = str(self.config.get("live_tts_external_plugin_name", "") or "").strip()
+        method_name = str(self.config.get("live_tts_external_service_method", "") or "").strip()
+        external_configured = backend in {"registered_service", "auto"}
+        try:
+            provider_available = self.context.get_using_tts_provider(session_id) is not None
+        except Exception:
+            provider_available = False
+
+        payload: dict[str, Any] = {}
+        error = ""
+        if not original_text:
+            error = "请先填写要合成的诊断文本"
+        else:
+            try:
+                payload = await self._build_bili_live_tts_payload(
+                    session_id,
+                    original_text,
+                    push_subtitle=False,
+                    schedule_local_playback=False,
+                    dry_run=True,
+                )
+            except Exception as exc:
+                logger.warning("[B站直播] 语音诊断合成失败: %s", exc)
+                error = str(exc)
+        error = error or str(payload.get("error") or "")
+        audio_path = str(payload.get("audio_path") or "")
+        audio = probe_audio_file(audio_path) if audio_path else empty_audio_info()
+        resolved = bool(payload.get("external_resolved"))
+        fallback_used = bool(payload.get("fallback_used"))
+        overlay_pushed = False
+        if audio_path and push_overlay:
+            try:
+                overlay_pushed = bool(await self._push_tts_audio_to_overlay(audio_path))
+            except Exception as exc:
+                logger.debug("[B站直播] 语音诊断推送 overlay 失败: %s", exc)
+        if audio_path and local_play:
+            try:
+                self._schedule_bili_live_tts_local_playback(audio_path)
+            except Exception as exc:
+                logger.debug("[B站直播] 语音诊断本机播放失败: %s", exc)
+        external_target = " / ".join(
+            part for part in (plugin_name, tool_name, method_name) if part
+        )
+        checks = build_diagnose_checks(
+            provider_available=provider_available,
+            external_configured=external_configured,
+            external_resolved=resolved,
+            external_error=str(payload.get("external_error") or ""),
+            external_target=external_target,
+            fallback_used=fallback_used,
+            audio_ok=bool(audio_path),
+            duration_known=bool(audio.get("duration_known")),
+        )
+        return {
+            "ok": bool(audio_path) and not error,
+            "error": error,
+            "backend": backend,
+            "backend_label": str(payload.get("backend_label") or ""),
+            "fallback_used": fallback_used,
+            "external": {
+                "configured": external_configured,
+                "tool": tool_name,
+                "plugin": plugin_name,
+                "method": method_name,
+                "resolved": resolved,
+                "error": str(payload.get("external_error") or ""),
+            },
+            "session": session_id,
+            "text": {
+                "input": original_text,
+                "spoken": str(payload.get("spoken_text") or ""),
+            },
+            "timing": {
+                "convert_seconds": round(float(payload.get("convert_elapsed") or 0.0), 3),
+                "synthesize_seconds": round(float(payload.get("tts_elapsed") or 0.0), 3),
+                "total_seconds": round(time.perf_counter() - started_at, 3),
+            },
+            "audio": audio,
+            "audio_data_url": inline_audio_data_url(audio_path) if audio_path else "",
+            "playback": {
+                "local": bool(local_play),
+                "overlay": bool(overlay_pushed),
+            },
+            "checks": checks,
         }
 
     def _live_tts_backend(self) -> str:
@@ -2693,9 +2852,12 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
     def _find_live_tts_registered_service(self) -> Any | None:
         tool_name = str(self.config.get("live_tts_external_tool_name", "") or "").strip()
         method_name = str(
-            self.config.get("live_tts_external_service_method", "text_to_speech") or ""
+            self.config.get("live_tts_external_service_method", "") or ""
         ).strip()
-        if not tool_name or not method_name:
+        if not tool_name:
+            return None
+        if not method_name:
+            logger.warning("[B站直播] 未配置外部 TTS 公开服务方法，无法调用外部注册服务")
             return None
         try:
             manager = self.context.get_llm_tool_manager()
@@ -2802,7 +2964,7 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         self, plugin: Any, text: str, session_id: str
     ) -> str:
         method_name = str(
-            self.config.get("live_tts_external_service_method", "text_to_speech") or ""
+            self.config.get("live_tts_external_service_method", "") or ""
         ).strip()
         method = getattr(plugin, method_name)
         kwargs = self._live_tts_supported_kwargs(

@@ -272,24 +272,20 @@ subtitle_scope = all
 
 ### 5. 使用已注册插件提供直播 TTS
 
-默认 `live_tts_backend=astrbot_provider`，直播回复沿用当前会话配置的 AstrBot TTS。若已经安装了提供公开合成服务的插件，可以改为由该插件生成直播音频；例如接入 Voice Hub：
+默认 `live_tts_backend=astrbot_provider`，直播回复沿用当前会话配置的 AstrBot TTS。若已经安装了对外提供语音合成方法的插件，可以改为由该插件生成直播音频：
 
 ```text
 live_tts_backend = auto
-live_tts_external_tool_name = voice_hub_speak
-live_tts_external_service_method = text_to_speech
-live_tts_external_plugin_name = astrbot_plugin_voice_hub
+live_tts_external_tool_name = <该插件注册的 LLM 工具名>
+live_tts_external_service_method = <该插件公开的合成方法名>
+live_tts_external_plugin_name = <插件名，可选，用于校验>
 ```
 
 `registered_service` 只使用外部服务，找不到或合成失败时回复会退回纯文字；`auto` 会在外部服务不可用时回退 AstrBot TTS。注册工具名只用于找到所属插件，直播插件不会执行工具本身，因此不会触发工具自行发送 QQ 语音。
 
-> 拓展页「直播面板 → 直播语音」里，外部 TTS 工具现在是**下拉选择**：点「刷新列表」重新扫描已注册工具，选中后自动带出所属插件名（`live_tts_external_plugin_name`）与可用方法；需要手填时选「自定义（手动填写）…」。
-
-若 Voice Hub 需要稳定的本地 WAV 输出以配合嘴型，可把服务方法改为：
-
-```text
-live_tts_external_service_method = render_pcm_wav
-```
+> 拓展页「直播面板 → 直播语音」里，外部 TTS 工具是**下拉选择**：点「刷新列表」重新扫描已注册工具，选中后自动带出所属插件名（`live_tts_external_plugin_name`）与可用方法（方法名按 `tts / speech / voice / audio / wav / pcm` 关键字识别，不写死具体方法）；需要手填时选「自定义（手动填写）…」。
+>
+> 同一分组下方的「语音诊断与试听」可以不开播直接合成一次：用当前后端与外部服务跑完整链路，返回实际命中的后端、文本转换与合成耗时、音频格式 / 采样率 / 时长 / 体积、输出路径，并逐项提示哪些环节通过、嘴型与字幕能否同步。
 
 ### 5.1 AstrBot 和 OBS 不在同一台机器：让 TTS 从浏览器源出声
 

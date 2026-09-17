@@ -227,9 +227,9 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_registered_service_uses_plugin_method_not_tool_handler(self):
         class VoiceService:
-            plugin_id = "astrbot_plugin_voice_hub"
+            plugin_id = "astrbot_plugin_demo_tts"
 
-            async def text_to_speech(self, text, *, session_id=""):
+            async def synthesize_speech(self, text, *, session_id=""):
                 return f"{session_id}:{text}.wav"
 
         service = VoiceService()
@@ -240,11 +240,11 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
             return "should-not-run.wav"
 
         tool = SimpleNamespace(handler=tool_handler)
-        manager = SimpleNamespace(get_tool=lambda name: tool if name == "voice_hub_speak" else None)
+        manager = SimpleNamespace(get_tool=lambda name: tool if name == "demo_tts_tool" else None)
         plugin = self._plugin(
-            live_tts_external_tool_name="voice_hub_speak",
-            live_tts_external_service_method="text_to_speech",
-            live_tts_external_plugin_name="astrbot_plugin_voice_hub",
+            live_tts_external_tool_name="demo_tts_tool",
+            live_tts_external_service_method="synthesize_speech",
+            live_tts_external_plugin_name="astrbot_plugin_demo_tts",
         )
         plugin.context = SimpleNamespace(get_llm_tool_manager=lambda: manager)
 
@@ -265,16 +265,16 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
         class VoiceService:
             plugin_id = "another_plugin"
 
-            async def text_to_speech(self, text):
+            async def synthesize_speech(self, text):
                 return text
 
         service = VoiceService()
         tool = SimpleNamespace(handler=__import__("functools").partial(lambda _service: None, service))
         manager = SimpleNamespace(get_tool=lambda _name: tool)
         plugin = self._plugin(
-            live_tts_external_tool_name="voice_hub_speak",
-            live_tts_external_service_method="text_to_speech",
-            live_tts_external_plugin_name="astrbot_plugin_voice_hub",
+            live_tts_external_tool_name="demo_tts_tool",
+            live_tts_external_service_method="synthesize_speech",
+            live_tts_external_plugin_name="astrbot_plugin_demo_tts",
         )
         plugin.context = SimpleNamespace(get_llm_tool_manager=lambda: manager)
 
@@ -282,18 +282,18 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
 
     def test_registered_service_accepts_plugin_id_from_metadata(self):
         class VoiceService:
-            metadata = SimpleNamespace(name="astrbot_plugin_voice_hub")
+            metadata = SimpleNamespace(name="astrbot_plugin_demo_tts")
 
-            async def text_to_speech(self, text):
+            async def synthesize_speech(self, text):
                 return text
 
         service = VoiceService()
         tool = SimpleNamespace(handler=__import__("functools").partial(lambda _service: None, service))
         manager = SimpleNamespace(get_tool=lambda _name: tool)
         plugin = self._plugin(
-            live_tts_external_tool_name="voice_hub_speak",
-            live_tts_external_service_method="text_to_speech",
-            live_tts_external_plugin_name="astrbot_plugin_voice_hub",
+            live_tts_external_tool_name="demo_tts_tool",
+            live_tts_external_service_method="synthesize_speech",
+            live_tts_external_plugin_name="astrbot_plugin_demo_tts",
         )
         plugin.context = SimpleNamespace(get_llm_tool_manager=lambda: manager)
 
@@ -301,11 +301,11 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_external_tts_accepts_path_mapping_and_invalid_timeout(self):
         class VoiceService:
-            async def render_pcm_wav(self, text, *, session_id=""):
+            async def render_wav(self, text, *, session_id=""):
                 return {"path": f"{session_id}-{text}.wav"}
 
         plugin = self._plugin(
-            live_tts_external_service_method="render_pcm_wav",
+            live_tts_external_service_method="render_wav",
             live_tts_external_timeout_seconds="not-a-number",
         )
 
@@ -318,7 +318,7 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_auto_backend_falls_back_to_session_provider_when_external_returns_empty(self):
         class ExternalService:
-            async def text_to_speech(self, _text):
+            async def synthesize_speech(self, _text):
                 return ""
 
         class SessionProvider:

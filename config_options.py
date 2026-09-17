@@ -15,19 +15,7 @@ import ipaddress
 import socket
 from typing import Any, Iterable
 
-# 明确属于「语音合成」的方法名
-TTS_METHOD_HINTS = (
-    "text_to_speech",
-    "render_pcm_wav",
-    "synthesize_speech",
-    "synthesize_voice",
-    "generate_audio",
-    "generate_voice",
-    "tts",
-    "speak",
-)
-
-# 名称里带这些关键字就当作候选合成方法
+# 名称里带这些关键字就当作候选合成方法（不做具体方法名白名单，避免写死某个插件）
 TTS_METHOD_KEYWORDS = ("tts", "speech", "voice", "audio", "wav", "pcm")
 
 # 明显是「语音识别」的方法，排除掉（避免把 ASR 当成合成）
@@ -160,7 +148,7 @@ def tts_service_methods(plugin: Any) -> list[str]:
             continue
         if not callable(attr):
             continue
-        if name in TTS_METHOD_HINTS or any(token in lowered for token in TTS_METHOD_KEYWORDS):
+        if any(token in lowered for token in TTS_METHOD_KEYWORDS):
             methods.append(name)
     return sorted(set(methods))
 
@@ -330,7 +318,7 @@ def subnet_hosts(value: str | None, prefix_len: int = 24, limit: int = MAX_SUBNE
 
 
 def derive_subnet_seeds(ips: Iterable[str], prefix_len: int = 24) -> list[str]:
-    """从若干 IPv4 里推导出去重的 /24 网段（形如 ``192.168.5.0/24``）。"""
+    """从若干 IPv4 里推导出去重的 /24 网段（形如 ``192.168.1.0/24``）。"""
     subnets: list[str] = []
     for value in ips:
         addr = private_ipv4(value)

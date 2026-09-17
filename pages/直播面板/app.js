@@ -97,6 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (action === "config") jumpToConfigGroup("connect");
     else if (action === "auth") authenticateVts();
     else if (action === "test") testVtsConnection();
+    else if (action === "audio") jumpToConfigGroup("audio-diagnose");
   });
   els.obsControlPanel?.addEventListener("click", handleObsControlClick);
   els.saveConfigBtn?.addEventListener("click", () => saveConfig());
@@ -393,6 +394,7 @@ function renderStageActions(data = {}) {
     <button type="button" data-stage-action="config">配置 VTS / L2D</button>
     <button type="button" data-stage-action="auth">认证 VTS</button>
     <button type="button" data-stage-action="test">测试连接</button>
+    <button type="button" data-stage-action="audio" title="试听合成效果，并查看直播 TTS 链路诊断">语音诊断</button>
     <small class="muted">${escapeHtml(vtsUrl)}</small>
   `;
 }
@@ -662,6 +664,10 @@ function renderConfig() {
     "live_tts_external_service_method",
     state.dynamicOptions.ttsMethods?.length ? `可用方法：${state.dynamicOptions.ttsMethods.join(" / ")}` : ""
   );
+  window.LiveAudioDiagnose?.mount(els.configEditor, {
+    webPlayback: Boolean(values.bili_live_tts_web_playback_enabled),
+    localPlayback: Boolean(values.bili_live_tts_local_playback_enabled),
+  });
 
   els.configEditor.querySelectorAll(".config-control").forEach((control) => {
     control.addEventListener("input", () => {
@@ -804,7 +810,7 @@ function handleDynamicSelectChange(select) {
     input.id = select.id;
     input.name = key;
     input.value = "";
-    input.placeholder = "手动填写，例如 192.168.5.55 或 voice_hub_speak";
+    input.placeholder = "手动填写，例如 192.168.1.10 或 tts_tool_name";
     select.replaceWith(input);
     input.focus();
     state.configDirty = true;

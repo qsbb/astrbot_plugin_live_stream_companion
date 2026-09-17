@@ -48,6 +48,7 @@ class LiveStreamCompanionPageApi:
             ("/memory", self.get_memory, ["GET"], "Live Stream Companion live memory"),
             ("/config/schema", self.get_config_schema, ["GET"], "Live Stream Companion config schema"),
             ("/options/external-tts", self.get_external_tts_options, ["GET"], "Live Stream Companion external TTS services"),
+            ("/tts/diagnose", self.tts_diagnose, ["POST"], "Live Stream Companion live TTS diagnostic"),
             ("/options/vts-candidates", self.get_vts_candidates, ["GET"], "Live Stream Companion VTS candidates"),
             ("/vts/auth", self.vts_authenticate, ["POST"], "Live Stream Companion VTS authentication"),
             ("/vts/test", self.vts_test, ["POST"], "Live Stream Companion VTS connection test"),
@@ -209,11 +210,28 @@ class LiveStreamCompanionPageApi:
                     "tool": str(config.get("live_tts_external_tool_name", "") or ""),
                     "plugin": str(config.get("live_tts_external_plugin_name", "") or ""),
                     "method": str(
-                        config.get("live_tts_external_service_method", "text_to_speech") or ""
+                        config.get("live_tts_external_service_method", "") or ""
                     ),
                 },
             }
         )
+
+    async def tts_diagnose(self) -> dict[str, Any]:
+        """按真实直播 TTS 链路合成一次，供拓展页试听与排查。"""
+        try:
+            payload = await request.get_json(silent=True) or {}
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                return self._error("请先填写要合成的诊断文本。")
+            result = await self.plugin._diagnose_live_tts_audio(
+                text,
+                push_overlay=bool(payload.get("push_overlay")),
+                local_play=bool(payload.get("local_play")),
+            )
+            return self._ok(result)
+        except Exception as exc:
+            logger.warning(f"[B站直播] 语音诊断失败: {exc}")
+            return self._error(str(exc))
 
     async def get_vts_candidates(self) -> dict[str, Any]:
         """探测本机 / 已配置地址 / 指定网段上的 VTS，作为 ``vts_host`` 下拉选项。"""
