@@ -227,7 +227,7 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_registered_service_uses_plugin_method_not_tool_handler(self):
         class VoiceService:
-            plugin_id = "astrbot_plugin_voice_hub"
+            plugin_id = "astrbot_plugin_demo_tts"
 
             async def text_to_speech(self, text, *, session_id=""):
                 return f"{session_id}:{text}.wav"
@@ -240,11 +240,11 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
             return "should-not-run.wav"
 
         tool = SimpleNamespace(handler=tool_handler)
-        manager = SimpleNamespace(get_tool=lambda name: tool if name == "voice_hub_speak" else None)
+        manager = SimpleNamespace(get_tool=lambda name: tool if name == "demo_tts_tool" else None)
         plugin = self._plugin(
-            live_tts_external_tool_name="voice_hub_speak",
+            live_tts_external_tool_name="demo_tts_tool",
             live_tts_external_service_method="text_to_speech",
-            live_tts_external_plugin_name="astrbot_plugin_voice_hub",
+            live_tts_external_plugin_name="astrbot_plugin_demo_tts",
         )
         plugin.context = SimpleNamespace(get_llm_tool_manager=lambda: manager)
 
@@ -272,9 +272,9 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
         tool = SimpleNamespace(handler=__import__("functools").partial(lambda _service: None, service))
         manager = SimpleNamespace(get_tool=lambda _name: tool)
         plugin = self._plugin(
-            live_tts_external_tool_name="voice_hub_speak",
+            live_tts_external_tool_name="demo_tts_tool",
             live_tts_external_service_method="text_to_speech",
-            live_tts_external_plugin_name="astrbot_plugin_voice_hub",
+            live_tts_external_plugin_name="astrbot_plugin_demo_tts",
         )
         plugin.context = SimpleNamespace(get_llm_tool_manager=lambda: manager)
 
@@ -282,7 +282,7 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
 
     def test_registered_service_accepts_plugin_id_from_metadata(self):
         class VoiceService:
-            metadata = SimpleNamespace(name="astrbot_plugin_voice_hub")
+            metadata = SimpleNamespace(name="astrbot_plugin_demo_tts")
 
             async def text_to_speech(self, text):
                 return text
@@ -291,9 +291,9 @@ class ExternalLiveTtsTests(unittest.IsolatedAsyncioTestCase):
         tool = SimpleNamespace(handler=__import__("functools").partial(lambda _service: None, service))
         manager = SimpleNamespace(get_tool=lambda _name: tool)
         plugin = self._plugin(
-            live_tts_external_tool_name="voice_hub_speak",
+            live_tts_external_tool_name="demo_tts_tool",
             live_tts_external_service_method="text_to_speech",
-            live_tts_external_plugin_name="astrbot_plugin_voice_hub",
+            live_tts_external_plugin_name="astrbot_plugin_demo_tts",
         )
         plugin.context = SimpleNamespace(get_llm_tool_manager=lambda: manager)
 

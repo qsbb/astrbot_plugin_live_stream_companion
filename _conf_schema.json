@@ -7,7 +7,7 @@
   "vts_host": {
     "description": "VTube Studio 的 IP 地址",
     "type": "string",
-    "hint": "在拓展页「直播面板 → 直播语音 / 远程 VTS」里可从下拉框选择探测到的 VTS（点「扫描局域网」重新扫描），也可以手动填写局域网 IP，例如 192.168.5.55；AstrBot 与 VTS 不同机时必须填写。"
+    "hint": "在拓展页「直播面板 → 直播语音 / 远程 VTS」里可从下拉框选择探测到的 VTS（点「扫描局域网」重新扫描），也可以手动填写局域网 IP，例如 192.168.1.10；AstrBot 与 VTS 不同机时必须填写。"
   },
   "vts_port": {
     "description": "VTube Studio WebSocket API 端口",

@@ -728,7 +728,7 @@ function handleDynamicSelectChange(select) {
     input.id = select.id;
     input.name = key;
     input.value = "";
-    input.placeholder = "手动填写，例如 192.168.5.55 或 voice_hub_speak";
+    input.placeholder = "手动填写，例如 192.168.1.10 或 demo_tts_tool";
     select.replaceWith(input);
     input.focus();
     state.configDirty = true;

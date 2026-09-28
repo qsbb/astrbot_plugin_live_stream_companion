@@ -444,7 +444,7 @@ async def scan_vts_hosts(
 ) -> List[dict]:
     """并发探测一批 ``host`` × ``port``，返回命中的 VTS 实例。
 
-    返回形如 ``[{"host": "192.168.5.55", "port": 8001, "version": "1.35.10"}]``。
+    返回形如 ``[{"host": "192.168.1.10", "port": 8001, "version": "1.35.10"}]``。
     """
     host_list = [str(host).strip() for host in hosts or [] if str(host).strip()]
     port_list = [int(port) for port in ports or [] if port]

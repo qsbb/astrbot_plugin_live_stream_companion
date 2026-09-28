@@ -330,7 +330,7 @@ def subnet_hosts(value: str | None, prefix_len: int = 24, limit: int = MAX_SUBNE
 
 
 def derive_subnet_seeds(ips: Iterable[str], prefix_len: int = 24) -> list[str]:
-    """从若干 IPv4 里推导出去重的 /24 网段（形如 ``192.168.5.0/24``）。"""
+    """从若干 IPv4 里推导出去重的 /24 网段（形如 ``192.168.1.0/24``）。"""
     subnets: list[str] = []
     for value in ips:
         addr = private_ipv4(value)
