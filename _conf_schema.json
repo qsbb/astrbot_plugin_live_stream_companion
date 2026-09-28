@@ -846,6 +846,18 @@
     },
     "default": 60
   },
+  "live_tts_emotion_passthrough_enabled": {
+    "description": "透传回复情绪给外部 TTS",
+    "type": "bool",
+    "hint": "开启后，直播回复解析到的情绪（Soullink 意图）会作为 emotion 参数传给外部 TTS 服务；对方方法签名不接受该参数时自动不传，行为与旧版本一致。",
+    "default": true
+  },
+  "live_tts_style_hint_enabled": {
+    "description": "透传朗读语气提示",
+    "type": "bool",
+    "hint": "开启后，把原始情绪词/强度整理成一段朗读语气提示，并随 context 参数传给外部 TTS 服务（同样按签名裁剪）。默认关闭，避免改变既有音色表现。",
+    "default": false
+  },
   "bili_live_tts_local_playback_enabled": {
     "description": "直播 TTS 本机播放",
     "type": "bool",
