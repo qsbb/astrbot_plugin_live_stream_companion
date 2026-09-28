@@ -65,6 +65,14 @@ from .bilibili_live import (
 )
 from .l2d_mixin import Live2DMixin
 from .mouth_sync_mixin import MouthSyncMixin
+from .live_tts_params import (
+    StyleIntentCache,
+    build_external_tts_kwargs,
+    build_style_hint,
+    describe_intent,
+    map_emotion,
+    supported_kwargs,
+)
 from .soullink_mixin import SoullinkMixin
 from .soullink_runtime import SoullinkRuntimeBridge
 from .subtitle_mixin import SubtitleMixin
@@ -343,6 +351,8 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         self._soullink_gaze_y = 0.5
         self._soullink_gaze_last_update_at = 0.0
         self._soullink_gaze_last_error = ""
+        #: 最近一条回复的情绪意图（供同一条回复的 TTS 复用；按文本指纹匹配）
+        self._live_tts_style_cache = StyleIntentCache()
         self._connected = False
 
     def _register_page_api_if_available(self) -> None:
@@ -2563,6 +2573,8 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
         spoken = self._strip_tts_blocks_from_text(text)
         if not spoken:
             return _fail("没有可合成的文本（清洗后为空）")
+        # 外部 TTS 的情绪/语气透传：情绪来自同一条回复的 Soullink 意图（可能为空）。
+        tts_emotion, tts_style_hint = self._live_tts_style_values(text)
         backend = self._live_tts_backend()
         tts_service: Any | None = None
         backend_label = "AstrBot Provider"
@@ -2592,7 +2604,11 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
             tts_started_at = time.perf_counter()
             if backend_label == "已注册外部服务":
                 audio_path = await self._synthesize_live_tts_with_registered_service(
-                    tts_service, spoken, session_id
+                    tts_service,
+                    spoken,
+                    session_id,
+                    emotion=tts_emotion,
+                    style_hint=tts_style_hint,
                 )
                 if not audio_path and backend == "auto":
                     logger.warning("[B站直播] 外部 TTS 服务未生成音频，回退 AstrBot TTS Provider")
@@ -2651,6 +2667,12 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 "fallback_used": fallback_used,
                 "convert_elapsed": convert_elapsed,
                 "tts_elapsed": tts_elapsed,
+                "style": {
+                    **describe_intent(self._live_tts_style_intent_for(text)),
+                    "emotion": tts_emotion,
+                    "hint": tts_style_hint,
+                    "hint_enabled": self._live_tts_style_hint_enabled(),
+                },
             }
         record_audio_path = self._prepare_bili_live_audio_for_record(audio_path)
         try:
@@ -2786,6 +2808,13 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 "resolved": resolved,
                 "error": str(payload.get("external_error") or ""),
             },
+            # 情绪/语气透传的实际入参（改完能不能生效一眼可见）
+            "style": payload.get("style") or {
+                **describe_intent(None),
+                "emotion": "",
+                "hint": "",
+                "hint_enabled": self._live_tts_style_hint_enabled(),
+            },
             "session": session_id,
             "text": {
                 "input": original_text,
@@ -2919,17 +2948,8 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
 
     @staticmethod
     def _live_tts_supported_kwargs(method: Any, values: dict[str, Any]) -> dict[str, Any]:
-        try:
-            parameters = inspect.signature(method).parameters
-        except (TypeError, ValueError):
-            return values
-        if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
-            return values
-        return {
-            name: value
-            for name, value in values.items()
-            if name in parameters and value is not None
-        }
+        """按目标方法签名裁剪入参（实现收敛到 live_tts_params，便于单测）。"""
+        return supported_kwargs(method, values)
 
     @staticmethod
     async def _await_live_tts_result(result: Any) -> Any:
@@ -2960,22 +2980,61 @@ class VTubeStudioPlugin(SubtitleMixin, MouthSyncMixin, Live2DMixin, SoullinkMixi
                 return value.strip()
         return ""
 
+    def _live_tts_style_intent_for(self, text: str) -> dict[str, Any]:
+        """取出与 ``text`` 匹配的 Soullink 情绪意图；不匹配就返回空。"""
+        cache = getattr(self, "_live_tts_style_cache", None)
+        if cache is None:
+            return {}
+        payload = cache.get(text)
+        return payload if isinstance(payload, dict) else {}
+
+    def _live_tts_style_values(self, text: str) -> tuple[str, str]:
+        """把回复情绪翻译成外部 TTS 的 (通用情绪, 语气提示)。
+
+        任一开关关闭或没有命中意图时都返回空值，外部服务行为与旧版本一致。
+        """
+        intent = self._live_tts_style_intent_for(text)
+        raw = str(intent.get("emotion") or "").strip()
+        if not raw or not self._live_tts_emotion_passthrough_enabled():
+            return "", ""
+        emotion = map_emotion(raw)
+        hint = ""
+        if self._live_tts_style_hint_enabled():
+            hint = build_style_hint(
+                raw,
+                intensity=intent.get("intensity"),
+                variant=intent.get("variant") or "",
+            )
+        return emotion, hint
+
+    def _live_tts_emotion_passthrough_enabled(self) -> bool:
+        return bool(self.config.get("live_tts_emotion_passthrough_enabled", True))
+
+    def _live_tts_style_hint_enabled(self) -> bool:
+        return bool(self.config.get("live_tts_style_hint_enabled", False))
+
     async def _synthesize_live_tts_with_registered_service(
-        self, plugin: Any, text: str, session_id: str
+        self,
+        plugin: Any,
+        text: str,
+        session_id: str,
+        *,
+        emotion: str = "",
+        style_hint: str = "",
     ) -> str:
         method_name = str(
             self.config.get("live_tts_external_service_method", "") or ""
         ).strip()
         method = getattr(plugin, method_name)
+        # 通用入参 + 按签名裁剪：对方不认识 emotion/context 时自动不传（旧行为不变）。
         kwargs = self._live_tts_supported_kwargs(
             method,
-            {
-                "emotion": "",
-                "target_umo": session_id,
-                "session": session_id,
-                "session_id": session_id,
-                "context": "",
-            },
+            build_external_tts_kwargs(
+                session_id=session_id,
+                emotion=emotion,
+                style_hint=style_hint,
+                style_enabled=self._live_tts_style_hint_enabled(),
+            ),
         )
         try:
             configured_timeout = int(
