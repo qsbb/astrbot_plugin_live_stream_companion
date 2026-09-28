@@ -4,10 +4,22 @@
 
 - 插件名：`astrbot_plugin_live_stream_companion`
 - 中文名：`我会直播圈米养你`
-- 当前版本：`1.8.1`
+- 当前版本：`1.8.3`
 - 适配平台：`aiocqhttp` / OneBot v11
 - AstrBot 版本：`>=4.16,<5`
 - 编码要求：UTF-8
+
+## 关于本仓库（fork 声明）
+
+> **本仓库是 [menglimi/astrbot_plugin_live_stream_companion](https://github.com/menglimi/astrbot_plugin_live_stream_companion) 的 fork**，由 **qsbb** 维护，**不是官方版本**。
+> 上游作者与版权信息完整保留（`LICENSE`、`metadata.yaml` 的 `author: menglimi` 均未改动），`repo:` 指向本 fork 仅为让 AstrBot 从这里取更新。
+>
+> 相对上游的全部差异、默认值与回退策略见 **[`FORK.md`](FORK.md)**；本 fork 的发布前自检命令：
+>
+> ```bash
+> python scripts/audit_fork.py      # 私货关键词 / 环境泄漏 / 溯源 / 版本一致性
+> git diff upstream/main --stat     # 差异只应涉及预期文件
+> ```
 
 ## 支持开发者（自愿捐款）
 
